@@ -6,8 +6,8 @@ import glob
 from pathlib import Path
 from faster_whisper import WhisperModel
 
-PROJECT_ROOT = Path(__file__).parent.parent
-INPUT_DIR = PROJECT_ROOT / "references" / "sources" / "transcripts"
+ARCHIVE_ROOT = Path(__file__).resolve().parent.parent
+INPUT_DIR = ARCHIVE_ROOT / "references" / "sources" / "transcripts"
 MODEL_SIZE = "base"
 
 

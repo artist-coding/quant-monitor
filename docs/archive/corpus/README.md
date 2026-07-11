@@ -23,22 +23,22 @@ v2.10.0 起从 `scripts/` 迁出。包含 6 个与"训练语料"采集 / 质检�
 ## 调用示例
 
 ```bash
-# 1. 下载 B 站视频
-cd corpus && python batch_download_bilibili.py
+# 1. 下载 B 站视频音频
+python docs/archive/corpus/batch_download_bilibili.py
 
 # 2. 音频转写
-python batch_transcribe.py
+python docs/archive/corpus/batch_transcribe.py
 
 # 3. 字幕清洗
-python srt_to_transcript.py input.srt > transcript.txt
+python docs/archive/corpus/srt_to_transcript.py input.srt > transcript.txt
 
 # 4. 调研合并
-python merge_research.py
+python docs/archive/corpus/merge_research.py
 
 # 5. SKILL.md 质量门（CI 自动跑，本地手动验证）
-python quality_check.py ../SKILL.md
-python quality_check.py ../SKILL.md --json
-python quality_check.py ../SKILL.md --strict
+python docs/archive/corpus/quality_check.py SKILL.md
+python docs/archive/corpus/quality_check.py SKILL.md --json
+python docs/archive/corpus/quality_check.py SKILL.md --strict
 ```
 
 ## v2.10.0 之前的路径

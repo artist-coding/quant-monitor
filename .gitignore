@@ -14,7 +14,7 @@ data/
 *.sqlite
 
 # 原始语料（体积大、版权问题，仓库中仅保留调研提炼文件和 SKILL.md）
-references/sources/
+docs/archive/references/sources/
 
 # Python
 __pycache__/
