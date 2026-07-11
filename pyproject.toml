@@ -85,7 +85,7 @@ omit = [
     "modules/__init__.py",
     "tests/*",
     "scripts/*",
-    "corpus/*",
+    "docs/archive/corpus/*",
 ]
 
 [tool.coverage.report]

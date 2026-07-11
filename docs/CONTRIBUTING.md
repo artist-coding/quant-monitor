@@ -28,7 +28,7 @@ zettaranc 持续输出内容，如果你有新的高质量语料：
 
 如果你想直接改进 Skill 的表现：
 
-1. 先阅读 `SKILL.md` 和 `references/research/` 下的调研文件
+1. 先阅读 `SKILL.md` 和 `docs/archive/references/research/` 下的调研文件
 2. 修改 `SKILL.md` 中的相关部分
 3. 在 PR 中说明修改依据（引用具体语料来源）
 

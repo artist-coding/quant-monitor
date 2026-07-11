@@ -90,5 +90,6 @@ frontend/vite
 
 # 数据报告输出（自动生成，不入库）
 data/reports/
+reports/
 .superpowers/
 design-demos/

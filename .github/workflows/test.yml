@@ -96,14 +96,14 @@ jobs:
       - name: Run SKILL.md quality gate
         run: |
           pip install -e .
-          python corpus/quality_check.py SKILL.md --json
+          python docs/archive/corpus/quality_check.py SKILL.md --json
           echo "=== summary ==="
-          python corpus/quality_check.py SKILL.md --strict || true
+          python docs/archive/corpus/quality_check.py SKILL.md --strict || true
 
       - name: Run SKILL.md dual-axis review
         run: |
           pip install -e .
-          python corpus/dual_axis_review.py SKILL.md --json || true
+          python docs/archive/corpus/dual_axis_review.py SKILL.md --json || true
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 

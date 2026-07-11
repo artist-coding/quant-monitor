@@ -14,14 +14,14 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-QUALITY_CHECK = PROJECT_ROOT / "corpus" / "quality_check.py"
+QUALITY_CHECK = PROJECT_ROOT / "docs" / "archive" / "corpus" / "quality_check.py"
 SKILL_MD = PROJECT_ROOT / "SKILL.md"
 
 
 def run_quality_check(*flags) -> subprocess.CompletedProcess:
     """调 quality_check.py 跑 SKILL.md"""
     cmd = [sys.executable, str(QUALITY_CHECK), str(SKILL_MD), *flags]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=30)
 
 
 # ==================== --json flag ====================
@@ -108,6 +108,7 @@ def test_missing_file_arg_exits_one():
         [sys.executable, str(QUALITY_CHECK)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
     assert result.returncode == 1
@@ -120,6 +121,7 @@ def test_missing_file_with_json_exits_one():
         [sys.executable, str(QUALITY_CHECK), "--json"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
     assert result.returncode == 1

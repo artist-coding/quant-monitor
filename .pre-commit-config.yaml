@@ -32,22 +32,22 @@ repos:
     hooks:
       - id: skill-quality-check
         name: SKILL.md 质量门（轴 A / 12 项确定性检查）
-        entry: python3 corpus/quality_check.py SKILL.md
+        entry: python3 docs/archive/corpus/quality_check.py SKILL.md
         language: system
         pass_filenames: false
-        # 仅在 SKILL.md 或 corpus/quality_check.py 改动时跑
-        files: '^(SKILL\.md|corpus/quality_check\.py)$'
+        # 仅在 SKILL.md 或归档的 quality_check.py 改动时跑
+        files: '^(SKILL\.md|docs/archive/corpus/quality_check\.py)$'
 
   # === SKILL.md 双轴评审（轴 A + 轴 B LLM 深度评审，手动触发）===
   - repo: local
     hooks:
       - id: skill-dual-axis-review
         name: SKILL.md 双轴评审（轴 A + 可选 LLM 轴 B）
-        entry: python3 corpus/dual_axis_review.py SKILL.md --skip-llm
+        entry: python3 docs/archive/corpus/dual_axis_review.py SKILL.md --skip-llm
         language: system
         pass_filenames: false
         stages: [manual]
-        files: '^(SKILL\.md|corpus/(quality_check|dual_axis_review)\.py)$'
+        files: '^(SKILL\.md|docs/archive/corpus/(quality_check|dual_axis_review)\.py)$'
 
   # === 标准文件检查 ===
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -55,9 +55,9 @@ repos:
     hooks:
       - id: check-merge-conflict
       - id: check-yaml
-        # corpus/quality_check.py 是 Python 脚本，argparse help 文本含大量 -xxx 触发器
+        # quality_check.py 是 Python 脚本，argparse help 文本含大量 -xxx 触发器
         # 关掉 argparse 误报
-        exclude: ^corpus/quality_check\.py$
+        exclude: ^docs/archive/corpus/quality_check\.py$
       - id: end-of-file-fixer
         exclude: '\.md$|\.lock$'
       - id: trailing-whitespace

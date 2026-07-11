@@ -1008,7 +1008,7 @@ A: SKILL.md 设计了首次激活时的模式检查流程，首次使用时会�
 | 1 | `SKILL.md` | 直接影响 Skill 表现，任何改动需语料支撑 |
 | 2 | `modules/*.py` | 数据层代码，改动需同步更新测试 |
 | 3 | `knowledge/*.md` | 知识文档，补充新语料或修正发现时更新 |
-| 4 | `references/research/*.md` | 调研档案，新增语料源时更新 |
+| 4 | `docs/archive/references/research/*.md` | 调研档案，新增语料源时更新 |
 | 5 | `README.md` / `CHANGELOG.md` | 版本发布时同步更新 |
 | 6 | `scripts/` | 仅在数据管道或检查逻辑需要改进时修改 |
 
