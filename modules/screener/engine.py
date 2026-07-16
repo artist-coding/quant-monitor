@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 # 并行化阈值：小于此数量不启用多进程（启动开销不值得）
 _PARALLEL_THRESHOLD = 50
 
+# 这些筛选条件会被用户当作趋势做多候选，必须经过 MACD 顾问最后会诊。
+_TREND_LONG_CRITERIA = {
+    "b1",
+    "perfect",
+    "breakout",
+    "super_b1",
+    "changan",
+    "b2_breakout",
+    "b3_consensus",
+    "build_wave",
+    "bull_rope",
+    "sandglass_perfect",
+    "volume_ratio_super",
+}
+
 
 def _is_picklable(obj) -> bool:
     """检查对象是否可被 pickle 序列化（用于多进程传参预检）。"""
@@ -202,7 +217,29 @@ def _filter_stock(result: tuple[str, list, StockScore], criteria: str) -> bool:
     # 从注册表查找并执行
     handler = _CRITERIA_REGISTRY.get(criteria)
     if handler:
-        return handler(klines, score)
+        matched = handler(klines, score)
+        if not matched or criteria not in _TREND_LONG_CRITERIA:
+            return matched
+
+        from ..strategies import MacdUpstreamSignal, evaluate_macd_strategy
+
+        macd = evaluate_macd_strategy(
+            klines,
+            upstream_signal=MacdUpstreamSignal(
+                exists=True,
+                is_trend_long=True,
+                is_b1=criteria in {"b1", "super_b1"},
+            ),
+        )
+        decision = macd["decision"]
+        if not macd["ready"]:
+            score.warnings.append("MACD预热不足120根K线，趋势做多候选暂不放行")
+            return False
+        if decision["hard_veto"] or macd["divergence"]["strong_top"]:
+            score.warnings.append(f"MACD顾问否决:{','.join(decision['warning_codes'])}")
+            return False
+        score.reasons.append(f"MACD顾问通过:{macd['regime']['phase']}")
+        return True
     return False
 
 
@@ -218,6 +255,7 @@ def screen_stocks(
 
     criteria:
     - "b1": B1买点机会
+    - "macd_eligible": MACD 趋势做多资格（顾问过滤，不是独立买点）
     - "perfect": 完美图形
     - "breakout": 突破形态
     - "oversold": 超跌反弹

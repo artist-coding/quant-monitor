@@ -23,6 +23,9 @@ v2.10.0 起从 `scripts/` 迁出。包含 6 个与"训练语料"采集 / 质检�
 ## 调用示例
 
 ```bash
+# 安装采集与转写依赖
+python -m pip install yt-dlp faster-whisper
+
 # 1. 下载 B 站视频音频
 python docs/archive/corpus/batch_download_bilibili.py
 
@@ -40,6 +43,8 @@ python docs/archive/corpus/quality_check.py SKILL.md
 python docs/archive/corpus/quality_check.py SKILL.md --json
 python docs/archive/corpus/quality_check.py SKILL.md --strict
 ```
+
+音频和转写结果保存在 `docs/archive/references/sources/transcripts/`。该目录包含大文件和原始语料，已由 `.gitignore` 排除。
 
 ## v2.10.0 之前的路径
 

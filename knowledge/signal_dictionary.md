@@ -28,12 +28,32 @@
 | `is_dead_fake` | bool | 死叉多——死叉后立刻金叉，空中加油 |
 | `is_top_divergence` | bool | 顶背离——价新高 DIF 未新高 |
 | `is_bottom_divergence` | bool | 底背离——价新低 DIF 未新低 |
-| `macd_veto` | bool | 一票否决——DIF<0 且无底背离，不能买 |
+| `macd_veto` | bool | 兼容字段：DIF<0 时趋势做多无资格；底背离默认不豁免 |
 
 **agent 解读提示**：
 - `is_gold_fake=True` → "A股最恶毒的诱多，金叉空"
-- `macd_veto=True` → "MACD一票否决，DIF在0轴下面还没有底背离，不能碰"
+- `macd_veto=True` → "MACD 趋势资格否决，DIF 在零轴下方；底背离只观察，不直接豁免"
 - `is_top_divergence=True` → "价格到了前高附近但DIF跟不上，趋势在衰竭"
+
+### MACD 顾问结构化输出
+
+新战法以 `StrategyType.MACD` 输出，常规优先级仅低于 B1；硬否决时提升为 `CRITICAL`。关键字段：
+
+| 路径 | 含义 |
+|------|------|
+| `regime.phase` | `BULL_IMPULSE / BULL_PULLBACK / BEAR_REBOUND / BEAR_IMPULSE` |
+| `momentum.up_sync_components` | 价格、DIF、柱体三项向上同步计数 |
+| `divergence.divergence_count` | 已确认相邻摆动点的连续背离次数 |
+| `cross_failure.gold_cross_failure` | 金叉空，反弹转强失败 |
+| `cross_failure.dead_cross_failure` | 死叉多，调整转弱失败 |
+| `impulse.state` | 建仓候选、确认、一波流风险或失败状态 |
+| `decision.trend_eligible_long` | 是否具备趋势做多资格 |
+| `decision.entry_ready` | 上游信号存在且通过 MACD 顾问检查 |
+| `decision.hard_veto` | 是否必须否决上游做多信号 |
+| `decision.warning_codes` | 可审计的风险解释代码 |
+| `decision.confirm_codes` | 可审计的确认解释代码 |
+
+MACD 顾问信号的 `action` 永远不会是 `BUY`；普通金叉也不能生成买入信号。
 
 ---
 

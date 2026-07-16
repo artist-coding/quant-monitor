@@ -748,7 +748,7 @@ def format_result(result: IndicatorResult) -> str:
     if result.is_top_divergence:
         macd_lines.append("  !!! 顶背离，见顶减仓")
     if result.is_bottom_divergence:
-        macd_lines.append("  !!! 底背离，反转建仓")
+        macd_lines.append("  !!! 底背离，仅观察；等待零轴与右侧结构确认")
 
     if result.macd_veto:
         macd_lines.append("  XXX MACD一票否决：不能买！")

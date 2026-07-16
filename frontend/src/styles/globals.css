@@ -1,58 +1,143 @@
 @import "tailwindcss";
 
-/* Z哥量化 — 深色金融终端主题 */
+/* ZETTA QUANT — 黑曜石金融终端 */
 @theme {
-  --color-bg-primary: #09090b; /* Zinc 950 */
-  --color-bg-secondary: rgba(24, 24, 27, 0.7); /* Zinc 900 transparent */
-  --color-bg-card: rgba(24, 24, 27, 0.5);
-  --color-bg-hover: rgba(39, 39, 42, 0.8);
-  --color-border: rgba(63, 63, 70, 0.5);
-  --color-text-primary: #f8fafc;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #64748b;
-  --color-accent-red: #f43f5e; /* Rose 500 */
-  --color-accent-green: #10b981; /* Emerald 500 */
-  --color-accent-gold: #f59e0b; /* Amber 500 */
-  --color-accent-blue: #3b82f6; /* Blue 500 */
-  --color-accent-purple: #8b5cf6; /* Violet 500 */
-  --color-accent-cyan: #06b6d4; /* Cyan 500 */
+  --color-bg-primary: #070a09;
+  --color-bg-secondary: rgba(12, 17, 15, 0.88);
+  --color-bg-card: rgba(15, 21, 19, 0.78);
+  --color-bg-hover: rgba(31, 43, 38, 0.82);
+  --color-border: rgba(135, 161, 149, 0.2);
+  --color-text-primary: #f2f7f4;
+  --color-text-secondary: #a4b1ab;
+  --color-text-muted: #65736d;
+  --color-accent-red: #ff6b6b;
+  --color-accent-green: #55e6a5;
+  --color-accent-gold: #c9ff63;
+  --color-accent-blue: #67e8f9;
+  --color-accent-purple: #a78bfa;
+  --color-accent-cyan: #2dd4bf;
 }
 
-/* 全局样式 */
+* { box-sizing: border-box; }
+
 html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
-  background-color: var(--color-bg-primary);
-  background-image: radial-gradient(ellipse at top right, rgba(30, 58, 138, 0.15), transparent 50%), radial-gradient(ellipse at bottom left, rgba(139, 92, 246, 0.1), transparent 50%);
+}
+
+html {
+  color-scheme: dark;
+  background: var(--color-bg-primary);
+}
+
+body {
+  min-width: 320px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 72% -20%, rgba(201, 255, 99, 0.09), transparent 35%),
+    radial-gradient(circle at 100% 72%, rgba(103, 232, 249, 0.06), transparent 28%),
+    var(--color-bg-primary);
   color: var(--color-text-primary);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.terminal-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 38px 38px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
+
+.glass-panel {
+  background: linear-gradient(145deg, rgba(19, 27, 23, 0.88), rgba(10, 15, 13, 0.76));
+  border: 1px solid rgba(151, 179, 166, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 18px 45px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(20px);
+}
+
+.panel-highlight {
+  position: relative;
+  overflow: hidden;
+}
+
+.panel-highlight::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto auto 8%;
+  width: 58%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(201, 255, 99, 0.62), transparent);
+}
+
+.micro-label {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.number-display {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+}
+
+.live-dot {
+  box-shadow: 0 0 0 4px rgba(85, 230, 165, 0.08), 0 0 14px rgba(85, 230, 165, 0.55);
+  animation: live-pulse 2.2s ease-in-out infinite;
+}
+
+.scan-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-110%);
+  background: linear-gradient(90deg, transparent, rgba(201, 255, 99, 0.06), transparent);
+  animation: scan-sheen 5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+@keyframes scan-sheen {
+  0%, 55% { transform: translateX(-110%); }
+  100% { transform: translateX(110%); }
 }
 
 .font-mono {
   font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', monospace;
 }
 
-/* 滚动条 */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+button, a { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled), [role='button'] { cursor: pointer; }
+
+::selection {
+  color: #0a0d0b;
+  background: rgba(201, 255, 99, 0.85);
 }
 
-/* 涨跌颜色 */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(143, 165, 155, 0.25); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(201, 255, 99, 0.38); }
+
 .text-up { color: var(--color-accent-red); }
 .text-down { color: var(--color-accent-green); }
 .bg-up { background-color: var(--color-accent-red); }
 .bg-down { background-color: var(--color-accent-green); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

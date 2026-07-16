@@ -86,6 +86,18 @@ class TestBacktestSignals:
         assert result.total_trades == 1
         assert result.trades[0].exit_reason == "signal"
 
+    def test_same_day_critical_veto_beats_buy_opportunity(self):
+        klines = _make_klines(n=5)
+        date = klines[2]["trade_date"]
+        signals = [
+            _make_signal(date, "BUY", priority_value=2),
+            _make_signal(date, "SELL", priority_value=3),
+        ]
+
+        result = backtest_signals(signals, klines, "600519.SH")
+
+        assert result.total_trades == 0
+
     def test_stop_loss(self):
         klines = _make_klines(n=10)
         # 构造下跌K线使止损触发

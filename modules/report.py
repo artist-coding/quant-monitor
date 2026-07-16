@@ -215,9 +215,12 @@ def assess_watchlist(
     本函数只读 DB 不计算。
     """
     db = db_path or _resolve_db_path()
-    with sqlite3.connect(db) as conn:
+    conn = sqlite3.connect(db)
+    try:
         conn.row_factory = sqlite3.Row
         return _build_assessments_from_db(ts_codes, conn)
+    finally:
+        conn.close()
 
 
 # ==================== 文本格式化工具 ====================

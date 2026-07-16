@@ -9,6 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api.config import settings
+from api.routes.backtest import router as backtest_router
+from api.routes.commentary import router as commentary_router
+from api.routes.daily_candidates import router as daily_candidates_router
+from api.routes.diagnosis import router as diagnosis_router
+from api.routes.screen import router as screen_router
+from api.routes.simulator import router as simulator_router
+from api.routes.stock import router as stock_router
+from api.routes.system import router as system_router
+from api.routes.trade import router as trade_router
+from api.routes.watchlist import router as watchlist_router
 
 logger = logging.getLogger("zettaranc-api")
 
@@ -49,17 +59,6 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ── 注册路由 ──
-from api.routes.stock import router as stock_router
-from api.routes.screen import router as screen_router
-from api.routes.watchlist import router as watchlist_router
-from api.routes.diagnosis import router as diagnosis_router
-from api.routes.backtest import router as backtest_router
-from api.routes.simulator import router as simulator_router
-from api.routes.trade import router as trade_router
-from api.routes.system import router as system_router
-from api.routes.commentary import router as commentary_router
-
 prefix = settings.api_prefix
 app.include_router(stock_router, prefix=f"{prefix}/stock", tags=["stock"])
 app.include_router(screen_router, prefix=f"{prefix}/screen", tags=["screen"])
@@ -70,6 +69,11 @@ app.include_router(simulator_router, prefix=f"{prefix}/simulator", tags=["simula
 app.include_router(trade_router, prefix=f"{prefix}/trade", tags=["trade"])
 app.include_router(system_router, prefix=f"{prefix}/system", tags=["system"])
 app.include_router(commentary_router, prefix=f"{prefix}", tags=["commentary"])
+app.include_router(
+    daily_candidates_router,
+    prefix=f"{prefix}/daily-candidates",
+    tags=["daily-candidates"],
+)
 
 
 def start_web():

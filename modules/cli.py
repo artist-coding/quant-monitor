@@ -37,6 +37,7 @@ def _json_output(data):
 # CLI 中文别名 → screener 英文 criteria 的统一映射
 STRATEGY_ALIAS = {
     "B1": "b1",
+    "MACD": "macd_eligible",
     "B2": "b2_breakout",
     "B3": "b3_consensus",
     "完美图形": "perfect",
@@ -674,8 +675,8 @@ def build_parser():
     p_analyze.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── screen ──
-    p_screen = subparsers.add_parser("screen", help="批量选股（11 种策略）")
-    p_screen.add_argument("--strategy", choices=STRATEGY_CHOICES, default="B1", help="筛选策略（11 种别名）")
+    p_screen = subparsers.add_parser("screen", help="批量选股（含 B1 与 MACD 顾问过滤）")
+    p_screen.add_argument("--strategy", choices=STRATEGY_CHOICES, default="B1", help="筛选策略别名")
     p_screen.add_argument("--limit", type=int, default=20, help="输出数量（0=全市场 500 上限）")
     p_screen.add_argument("--no-parallel", action="store_true", help="禁用多进程并行")
     p_screen.add_argument("--json", action="store_true", help="JSON输出")
@@ -823,6 +824,160 @@ def build_parser():
         help="目标函数（默认 calmar）",
     )
 
+    # ── daily-portfolio（无前视日线评分与成对回放）──
+    p_daily_portfolio = subparsers.add_parser(
+        "daily-portfolio",
+        help="安全日线持仓评分与 paired replay（显式市场证据/交易日历）",
+    )
+    p_daily_portfolio_sub = p_daily_portfolio.add_subparsers(
+        dest="daily_portfolio_action",
+        required=True,
+    )
+
+    p_daily_score = p_daily_portfolio_sub.add_parser(
+        "score",
+        help="按确认日线计算单股买卖分与目标仓位",
+    )
+    p_daily_score.add_argument("ts_code", help="股票代码，如 600519.SH")
+    p_daily_score.add_argument("--as-of", required=True, help="评分日 YYYYMMDD")
+    p_daily_score.add_argument(
+        "--market-file",
+        required=True,
+        help="显式市场快照 JSON（market-snapshots-v1）",
+    )
+    p_daily_score.add_argument(
+        "--position-file",
+        help="可选的显式持仓 JSON；省略表示空仓",
+    )
+    p_daily_score.add_argument(
+        "--data-source",
+        choices=["sqlite", "tushare"],
+        default="sqlite",
+        help="显式日线数据源（默认 sqlite）",
+    )
+    p_daily_score.add_argument(
+        "--lookback",
+        type=int,
+        default=180,
+        help="评分历史K线数量，至少120（默认180）",
+    )
+    p_daily_score.add_argument(
+        "--max-position-pct",
+        type=float,
+        default=0.10,
+        help="该股票占组合的最大仓位比例（默认0.10）",
+    )
+    p_daily_score.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_daily_buy_backtest = p_daily_portfolio_sub.add_parser(
+        "backtest-buy",
+        help="隔离验证买入分：D日收盘评分、D+1原始开盘、固定窗口结果",
+    )
+    p_daily_buy_backtest.add_argument("ts_code", help="股票代码，如 600519.SH")
+    p_daily_buy_backtest.add_argument("--start", required=True, help="评分起始日 YYYYMMDD")
+    p_daily_buy_backtest.add_argument("--end", required=True, help="评分结束日 YYYYMMDD")
+    p_daily_buy_backtest.add_argument(
+        "--calendar-file",
+        required=True,
+        help="显式交易所日历 JSON，须覆盖最大结果观察窗口",
+    )
+    p_daily_buy_backtest.add_argument(
+        "--exchange",
+        required=True,
+        help="交易所代码，必须与日历文件一致，如 SSE/SZSE/BSE",
+    )
+    p_daily_buy_backtest.add_argument(
+        "--market-file",
+        required=True,
+        help="逐日显式市场快照 JSON（market-snapshots-v1）",
+    )
+    p_daily_buy_backtest.add_argument(
+        "--data-source",
+        choices=["sqlite"],
+        default="sqlite",
+        help="首版买点回测仅允许RAW SQLite；Tushare QFQ未接双价前禁用",
+    )
+    p_daily_buy_backtest.add_argument(
+        "--warmup-bars",
+        type=int,
+        default=150,
+        help="首个评分日前的预热K线数量，至少120（默认150）",
+    )
+    p_daily_buy_backtest.add_argument(
+        "--horizons",
+        default="1,3,5,10,20",
+        help="固定结果观察窗口，逗号分隔交易日（默认1,3,5,10,20）",
+    )
+    p_daily_buy_backtest.add_argument(
+        "--standardized-equity",
+        type=float,
+        default=1_000_000.0,
+        help="事件研究标准化权益，仅用于费用/风险股数（默认1000000）",
+    )
+    p_daily_buy_backtest.add_argument(
+        "--include-events",
+        action="store_true",
+        help="在JSON中包含逐日评分、成交和结果路径",
+    )
+    p_daily_buy_backtest.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_daily_replay = p_daily_portfolio_sub.add_parser(
+        "replay-pair",
+        help="用同一量化输入对比同收盘研究口径与次日开盘严格口径",
+    )
+    p_daily_replay.add_argument("ts_code", help="股票代码，如 600519.SH")
+    p_daily_replay.add_argument("--start", required=True, help="回放起始日 YYYYMMDD")
+    p_daily_replay.add_argument("--end", required=True, help="回放结束日 YYYYMMDD")
+    p_daily_replay.add_argument(
+        "--calendar-file",
+        required=True,
+        help="显式交易所日历 JSON（exchange-calendar-v1，须含结束日后的下一交易日）",
+    )
+    p_daily_replay.add_argument(
+        "--exchange",
+        required=True,
+        help="交易所代码，必须与日历文件一致，如 SSE/SZSE/BSE",
+    )
+    p_daily_replay.add_argument(
+        "--market-file",
+        required=True,
+        help="逐日显式市场快照 JSON（market-snapshots-v1）",
+    )
+    p_daily_replay.add_argument(
+        "--position-file",
+        help="可选的初始持仓 JSON；省略表示空仓",
+    )
+    p_daily_replay.add_argument(
+        "--data-source",
+        choices=["sqlite", "tushare"],
+        default="sqlite",
+        help="显式日线数据源（默认 sqlite）",
+    )
+    p_daily_replay.add_argument(
+        "--warmup-bars",
+        type=int,
+        default=150,
+        help="回放前预热K线数量，至少120（默认150）",
+    )
+    p_daily_replay.add_argument(
+        "--initial-cash",
+        type=float,
+        default=100_000.0,
+        help="初始现金（默认100000）",
+    )
+    p_daily_replay.add_argument(
+        "--max-position-pct",
+        type=float,
+        default=0.10,
+        help="该股票占组合的最大仓位比例（默认0.10）",
+    )
+    p_daily_replay.add_argument(
+        "--include-daily-records",
+        action="store_true",
+        help="在JSON中包含逐交易日审计记录",
+    )
+    p_daily_replay.add_argument("--json", action="store_true", help="JSON输出")
+
     return parser
 
 
@@ -833,6 +988,7 @@ def main():
 
     # 调度表
     from modules.cli_commands import cmd_backtest, cmd_trade, cmd_daily, cmd_monitor, cmd_simulate
+    from modules.daily_portfolio.cli_adapter import cmd_daily_portfolio
 
     handlers = {
         "analyze": cmd_analyze,
@@ -849,6 +1005,7 @@ def main():
         "self-optimize": cmd_self_optimize,
         "monitor": cmd_monitor,
         "simulate": cmd_simulate,
+        "daily-portfolio": cmd_daily_portfolio,
     }
     handlers[args.command](args)
 

@@ -3,7 +3,7 @@ name: zettaranc-perspective
 description: |
   Load when: 用户需要以下任一服务——
   - 分析 A 股个股的技术面/买卖点/风险，或询问某只股票能不能买/卖
-  - 解读「少妇战法」「B1/B2/B3」「四块砖」「双线趋势」「麒麟会」「三波理论」等 Z 哥交易体系
+  - 解读「少妇战法」「B1/B2/B3」「MACD 顾问」「四块砖」「双线趋势」「麒麟会」「三波理论」等 Z 哥交易体系
   - 评估投资组合、持仓诊断、交易复盘、交割单点评
   - 回答职业/人生/商业决策问题（需要 Z 哥「四圈框架」「四层模型」「时代主线」视角）
   - 用户明确说「切换到 Z 哥」「用万千视角」「zettaranc perspective」或类似角色切换指令
@@ -135,6 +135,7 @@ description: |
 | 资源 | 加载时机 | 用途 | 大小参考 |
 |------|---------|------|---------|
 | `knowledge/trading-core.md` | 用户询问 B1/B2/B3、少妇战法、四块砖、量比战法 | 战术规则库 | ~15KB |
+| `knowledge/macd-strategy.md` | 用户询问 MACD 顾问、顺周期、背离、交叉失败、MACD 否决 | MACD 完整战法与量化边界 | ~5KB |
 | `knowledge/indicators.md` | 用户询问 MACD、KDJ、麒麟会、三波理论、沙漏评分 | 指标工具库 | ~12KB |
 | `knowledge/sell-discipline.md` | 用户询问什么时候卖、防卖飞、S1/S2/S3 | 卖出规则库 | ~10KB |
 | `knowledge/trend-lines.md` | 用户询问双线战法、白线黄线、牛绳理论 | 趋势判断库 | ~8KB |
@@ -296,7 +297,8 @@ python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; fr
 | 用户意图 | 命令 | 输出 |
 |---------|------|------|
 | "帮我看看XX" / "XX能不能买" | `zt analyze <code> --json` | 指标+战法+主力阶段+诊断+评分 |
-| "现在能买什么" / "选股" | `zt screen --strategy B1 --json --limit 10` | 选股列表（11种策略） |
+| "现在能买什么" / "选股" | `zt screen --strategy B1 --json --limit 10` | 按策略筛选的候选列表 |
+| "哪些票有 MACD 趋势资格" | `zt screen --strategy MACD --json --limit 10` | 趋势资格列表（不是独立买点） |
 | "我的自选股怎么样" | `zt watchlist scan --json` | 观察池扫描结果 |
 | "帮我诊断一下XX" | `zt diagnose <code> --json` | 持仓诊断报告 |
 | "回测一下XX" | `zt backtest shaofu <code> --json` | 少妇战法回测结果 |
@@ -320,6 +322,7 @@ python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; fr
 | 策略名 | CLI 参数 | 说明 |
 |--------|---------|------|
 | B1 | `--strategy B1` | J值超卖买点 |
+| MACD | `--strategy MACD` | 零轴资格、顺周期、背离与交叉失败顾问过滤；不独立批准买入 |
 | B2 | `--strategy B2` | 趋势确认买点 |
 | B3 | `--strategy B3` | 加速确认买点 |
 | 超级B1 | `--strategy 超级B1` | N型+放量+缩量+J负值 |
@@ -389,7 +392,7 @@ python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; fr
 
 ### 模型 3: 短线交易系统
 **一句话**：散户的生存之道不是预测市场，而是建立一套简单、可执行、有纪律的交易系统，用「只输一根 K 线」的窄止损换取长期复利。
-**完整展开** → `knowledge/trading-core.md`（四层结构、少妇战法 SOP、B1/B2/B3、量比战法）+ `knowledge/indicators.md`（MACD 一票否决、麒麟会、三波理论）+ `knowledge/sell-discipline.md`（防卖飞、S1/S2/S3）+ `knowledge/position-management.md`（仓位铁律、三层防火墙）+ `knowledge/trend-lines.md`（双线战法、牛绳理论）+ `knowledge/key-candles.md`（6 种趋势转换）+ `knowledge/advanced-patterns.md`（长安战法、平行重炮、超级 B1）+ `knowledge/breathing-theory.md`（呼吸节奏、蜈蚣图）+ `knowledge/three-best-principles.md`（只选最美/最强/最硬）+ `knowledge/iron-butterfly.md`（麒麟会四阶段）+ `knowledge/four-rhythms.md`（四大节奏）
+**完整展开** → `knowledge/trading-core.md`（四层结构、少妇战法 SOP、B1/B2/B3、量比战法）+ `knowledge/macd-strategy.md`（MACD 趋势资格、顺周期、背离、交叉失败与硬否决）+ `knowledge/indicators.md`（指标工具、麒麟会、三波理论）+ `knowledge/sell-discipline.md`（防卖飞、S1/S2/S3）+ `knowledge/position-management.md`（仓位铁律、三层防火墙）+ `knowledge/trend-lines.md`（双线战法、牛绳理论）+ `knowledge/key-candles.md`（6 种趋势转换）+ `knowledge/advanced-patterns.md`（长安战法、平行重炮、超级 B1）+ `knowledge/breathing-theory.md`（呼吸节奏、蜈蚣图）+ `knowledge/three-best-principles.md`（只选最美/最强/最硬）+ `knowledge/iron-butterfly.md`（麒麟会四阶段）+ `knowledge/four-rhythms.md`（四大节奏）
 **局限**：纪律要求极高；极端单边行情效果打折扣；A 股特色逻辑。
 
 ### 模型 4: 长线配置框架

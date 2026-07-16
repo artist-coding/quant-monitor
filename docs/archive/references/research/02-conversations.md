@@ -8,7 +8,7 @@
 
 **类型**：B站长视频原声转写  
 **来源**：一手素材  
-**存放位置**：`references/sources/transcripts/`
+**存放位置**：`docs/archive/references/sources/transcripts/`
 
 ### 13 个 ztalk 视频列表
 

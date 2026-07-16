@@ -22,6 +22,7 @@ CATEGORY_RESONANCE_BONUS: dict[tuple[str, str], float] = {
 
 # 直接触发 HIGH_RISK 的 strategy 列表
 RISK_STRATEGIES: set[str] = {
+    "MACD硬否决",
     "三波冲刺",
     "麒麟派发",
     "出货五式",

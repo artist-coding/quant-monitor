@@ -1,4 +1,4 @@
-from ..core import DailyData, calculate_ma, calculate_ema
+from ..core import DailyData, calculate_ma
 
 
 def calculate_zg_white(klines: list[DailyData]) -> float:
@@ -9,13 +9,18 @@ def calculate_zg_white(klines: list[DailyData]) -> float:
     """
     if len(klines) < 10:
         return 0
+
     closes = [k.close for k in klines]
-    ema1 = calculate_ema(closes, 10)
-    # 再次平滑：用前10天数据计算第二次EMA
-    if len(klines) < 19:
-        return ema1
-    recent_10 = closes[-10:]
-    ema2 = calculate_ema(recent_10, 10)
+
+    # 通达信 EMA 以序列首值初始化。第二层 EMA 必须对第一层 EMA
+    # 的逐日序列继续平滑，不能再次对原始收盘价做 EMA。
+    alpha = 2 / (10 + 1)
+    ema1 = closes[0]
+    ema2 = ema1
+    for close in closes[1:]:
+        ema1 = close * alpha + ema1 * (1 - alpha)
+        ema2 = ema1 * alpha + ema2 * (1 - alpha)
+
     return round(ema2, 2)
 
 

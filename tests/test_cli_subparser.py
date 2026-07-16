@@ -112,10 +112,11 @@ def test_sync_stk_factor_help():
     assert result.returncode == 0
 
 
-# ==================== screen 11 种 strategy 仍被接受 ====================
+# ==================== screen 核心 strategy 仍被接受 ====================
 
 STRATEGY_ALIAS = {
     "B1": "b1",
+    "MACD": "macd_eligible",
     "B2": "b2_breakout",
     "B3": "b3_consensus",
     "完美图形": "perfect",
@@ -131,7 +132,7 @@ STRATEGY_ALIAS = {
 
 @pytest.mark.parametrize("strategy", STRATEGY_ALIAS.keys())
 def test_screen_accepts_all_strategies_via_cli(strategy):
-    """screen --help 应该列出所有 11 种 strategy"""
+    """screen --help 应该列出所有核心 strategy"""
     result = run_zt("screen", "--help")
     assert result.returncode == 0
     assert strategy in result.stdout, f"screen --help 缺 {strategy}"

@@ -15,7 +15,7 @@ from ..datasource import DataSource, get_datasource
 from ..indicators import DailyData, calculate_sandglass_score
 from ..indicators.volume_patterns import detect_volume_ratio_strategy
 from ..indicators.price_patterns import detect_bull_rope
-from ..strategies import detect_all_strategies
+from ..strategies import MacdUpstreamSignal, detect_all_strategies, evaluate_macd_strategy
 from . import (
     SignalScore,
     SignalVerdict,
@@ -54,21 +54,24 @@ def _extract_signals(score: StockScore, klines: list[DailyData]) -> list[str]:
     # 量比战法
     try:
         vr = detect_volume_ratio_strategy(klines)
-        scene = vr.get("scene", "")
-        if scene in ("攻击日", "超级攻击", "单向拉升"):
+        scenario = vr.get("scenario", "")
+        if scenario in ("攻击日", "超级攻击", "单向拉升"):
             signals.append("量比攻击")
-        elif scene in ("出货日", "弱势日"):
+        elif scenario in ("出货日", "弱势日"):
             signals.append("量比恶劣")
     except Exception:
         pass
 
     # 牛绳
     try:
-        br = detect_bull_rope(klines)
-        if br.get("signal") == "牵牛":
-            signals.append("牛绳金叉")
-        elif br.get("signal") == "牛绳断":
-            signals.append("牛绳断")
+        # 指标在数据不足时的默认 status 也是“牛绳断”，不能当成真实空头信号。
+        if len(klines) >= 120:
+            br = detect_bull_rope(klines)
+            status = br.get("status", "")
+            if status in ("牵牛", "金叉"):
+                signals.append("牛绳金叉")
+            elif status in ("牛绳断", "死叉"):
+                signals.append("牛绳断")
     except Exception:
         pass
 
@@ -184,9 +187,28 @@ def evaluate_stock(
     score = analyze_stock(ts_code, klines=klines, datasource=ds)
     signals = _extract_signals(score, klines)
 
+    # simple 模式同样执行 MACD 最终会诊，避免只在 resonance 模式落实否决。
+    macd_result = None
+    if "B1" in signals and len(klines) >= 120 and all(
+        isinstance(getattr(item, "close", None), (int, float)) for item in klines
+    ):
+        macd_result = evaluate_macd_strategy(
+            klines,
+            upstream_signal=MacdUpstreamSignal(exists=True, is_trend_long=True, is_b1=True),
+        )
+        if macd_result["decision"]["hard_veto"]:
+            signals.append("MACD硬否决")
+            score.warnings.append(
+                f"MACD顾问否决:{','.join(macd_result['decision']['warning_codes'])}"
+            )
+        elif macd_result["decision"]["entry_ready"]:
+            signals.append("MACD趋势资格")
+
     verdict = SignalVerdict.PASS
     threshold = config.position_score_threshold if config else 60.0
-    if score.score < threshold:
+    if macd_result and macd_result["decision"]["hard_veto"]:
+        verdict = SignalVerdict.BAD_STAGE
+    elif score.score < threshold:
         verdict = SignalVerdict.LOW_SCORE
     elif "高风险阶段" in signals:
         verdict = SignalVerdict.HIGH_RISK

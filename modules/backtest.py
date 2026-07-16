@@ -20,7 +20,16 @@ from typing import Any, Optional
 # except ImportError:
 #     from strategies import detect_all_strategies, get_kline_data, Priority
 
-from modules.strategies import detect_all_strategies, get_kline_data
+from modules.strategies import detect_all_strategies, get_kline_data, strategy_priority_rank
+
+
+def _signal_priority_key(signal: Any) -> tuple[int, int, float]:
+    """统一信号优先级：CRITICAL(3) 最高，同层 B1 > MACD > 其他。"""
+    priority = signal.priority.value if hasattr(signal.priority, "value") else 0
+    strategy = getattr(signal, "strategy", None)
+    strategy_rank = strategy_priority_rank(strategy) if strategy is not None else 0
+    confidence = float(getattr(signal, "confidence", 0.0) or 0.0)
+    return priority, strategy_rank, confidence
 
 
 @dataclass
@@ -542,8 +551,8 @@ def backtest_multi_strategy(
             result.equity_curve.append((date, total_value))
             continue
 
-        # 按优先级排序（数值越小优先级越高：CRITICAL=1, OPPORTUNITY=2, OBSERVE=3）
-        day_signals.sort(key=lambda s: s.priority.value if hasattr(s.priority, "value") else 3)
+        # 数值越大优先级越高：CRITICAL=3, OPPORTUNITY=2, OBSERVE=1。
+        day_signals.sort(key=_signal_priority_key, reverse=True)
 
         # 取最高优先级信号
         top_signal = day_signals[0]
@@ -727,7 +736,7 @@ def backtest_portfolio(
                 continue
 
             # 按优先级排序
-            day_signals.sort(key=lambda s: s.priority.value if hasattr(s.priority, "value") else 3)
+            day_signals.sort(key=_signal_priority_key, reverse=True)
             top_signal = day_signals[0]
 
             # 买入

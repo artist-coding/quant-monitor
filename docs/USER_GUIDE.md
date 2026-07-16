@@ -281,6 +281,9 @@ python -m modules.cli screen --strategy 建仓波 --limit 20
 # 吸筹阶段
 python -m modules.cli screen --strategy 吸筹 --limit 20
 
+# MACD 趋势资格（顾问过滤，不是独立买点）
+python -m modules.cli screen --strategy MACD --limit 20
+
 # 安全标的
 python -m modules.cli screen --strategy 安全 --limit 20
 
@@ -293,6 +296,7 @@ python -m modules.cli screen
 | 策略 | 说明 | 适用场景 |
 |------|------|---------|
 | `B1` | J 值超卖 + N 型结构 + 缩量回调 | 左侧抄底 |
+| `MACD` | DIF 零轴资格 + 顺周期 + 背离/交叉失败过滤 | 上游信号会诊，不独立买入 |
 | `B2` | B1 后放量长阳确认 | 右侧追买 |
 | `完美图形` | 趋势/量价/风险综合评分高 | 综合优选 |
 | `超级B1` | 强 B1 信号，置信度更高 | 高确定性左侧 |
@@ -554,6 +558,7 @@ context = reviewer.prepare_review_context("600487.SH")
 | 文件 | 核心内容 |
 |------|---------|
 | `trading-core.md` | 四层交易结构、少妇战法 SOP、B1/B2/B3、量比战法 |
+| `macd-strategy.md` | MACD 趋势资格、顺周期、背离、交叉失败与硬否决 |
 | `indicators.md` | MACD 一票否决、筹码理论、麒麟会、三波理论 |
 | `sell-discipline.md` | 防卖飞 V1.4、出货五式、S1/S2/S3 逃顶 |
 | `position-management.md` | 仓位铁律、三层防火墙 |
@@ -989,6 +994,7 @@ A: SKILL.md 设计了首次激活时的模式检查流程，首次使用时会�
 | 战法 | 说明 |
 |------|------|
 | **三波理论** | 建仓波（25-50%无涨停）→ 拉升波（快速脱离有涨停）→ 冲刺波（最后主升） |
+| **MACD 顾问** | 四状态趋势资格、顺周期、无未来函数背离、金叉空/死叉多与硬否决 |
 | **麒麟会四阶段** | 吸筹 → 拉升 → 派发 → 回落（评分制识别） |
 | **双线战法** | 白线在黄线上 = 多头，交叉 = 金叉/死叉 |
 | **牛绳理论** | 双线战法的抽象：白线牵牛，跌破 = 牛绳断 |

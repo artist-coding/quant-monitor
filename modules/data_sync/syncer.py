@@ -215,7 +215,13 @@ class DataSyncer:
 
     # ==================== 日线K线数据 ====================
 
-    def sync_daily_kline(self, ts_code: str, start_date: str | None = None, end_date: str | None = None) -> int:
+    def sync_daily_kline(
+        self,
+        ts_code: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        days: int = 730,
+    ) -> int:
         """
         同步单只股票的日线数据（增量更新）
 
@@ -223,10 +229,14 @@ class DataSyncer:
             ts_code: 股票代码，如 '000001.SZ'
             start_date: 开始日期，格式 YYYYMMDD，None 表示从数据库最后一条开始
             end_date: 结束日期，格式 YYYYMMDD，None 表示到最新
+            days: 没有历史数据时首次同步的自然日窗口
 
         Returns:
             更新条数
         """
+        if isinstance(days, bool) or not isinstance(days, int) or days <= 0:
+            raise ValueError("days must be a positive integer")
+
         # 增量更新：获取最后同步日期
         if start_date is None:
             last_date = self._get_last_date("daily_kline", ts_code)
@@ -235,9 +245,9 @@ class DataSyncer:
                 last_dt = datetime.strptime(last_date, "%Y%m%d")
                 start_date = (last_dt + timedelta(days=1)).strftime("%Y%m%d")
 
-        # 默认从2年前开始
+        # 默认从指定窗口开始
         if start_date is None:
-            start_date = (datetime.now() - timedelta(days=730)).strftime("%Y%m%d")
+            start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
         if end_date is None:
             end_date = datetime.now().strftime("%Y%m%d")
 
@@ -352,9 +362,10 @@ class DataSyncer:
         end_date = datetime.now().strftime("%Y%m%d")
 
         def _sync_one(code: str) -> int:
-            # 近2天已同步则跳过
+            # 只有已经覆盖目标日才能跳过。按“距今天不足两天”判断会在
+            # 周二把周一数据误判为足够新，导致漏掉周二收盘日线。
             last_date = self._get_last_date("daily_kline", code)
-            if last_date and (datetime.now() - datetime.strptime(last_date, "%Y%m%d")).days < 2:
+            if last_date and last_date >= end_date:
                 return 0
             return self.sync_daily_kline(code, start_date, end_date)
 

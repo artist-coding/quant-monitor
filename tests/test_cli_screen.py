@@ -12,9 +12,10 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
-# 16 个 strategy 中文别名（与 cli.STRATEGY_ALIAS 保持同步）
+# 17 个 strategy 中文别名（与 cli.STRATEGY_ALIAS 保持同步）
 EXPECTED_STRATEGIES = [
     "B1",
+    "MACD",
     "B2",
     "B3",
     "完美图形",
@@ -67,11 +68,11 @@ def fake_screen_result():
 # ==================== cmd_screen 修复验证 ====================
 
 
-def test_strategy_alias_covers_all_sixteen():
-    """STRATEGY_ALIAS 必须覆盖 16 种 strategy"""
+def test_strategy_alias_covers_all_seventeen():
+    """STRATEGY_ALIAS 必须覆盖 17 种 strategy"""
     from modules.cli import STRATEGY_ALIAS
 
-    assert len(STRATEGY_ALIAS) == 16
+    assert len(STRATEGY_ALIAS) == 17
     for name in EXPECTED_STRATEGIES:
         assert name in STRATEGY_ALIAS, f"STRATEGY_ALIAS 缺 {name}"
 
@@ -81,6 +82,7 @@ def test_strategy_alias_mapping_is_correct():
     from modules.cli import STRATEGY_ALIAS
 
     assert STRATEGY_ALIAS["B1"] == "b1"
+    assert STRATEGY_ALIAS["MACD"] == "macd_eligible"
     assert STRATEGY_ALIAS["B2"] == "b2_breakout"
     assert STRATEGY_ALIAS["B3"] == "b3_consensus"
     assert STRATEGY_ALIAS["完美图形"] == "perfect"

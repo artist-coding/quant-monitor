@@ -1,6 +1,7 @@
 // 策略列表
 export const STRATEGIES = [
   { alias: 'B1', label: 'B1 买点' },
+  { alias: 'MACD', label: 'MACD 趋势资格' },
   { alias: 'B2', label: 'B2 确认' },
   { alias: 'B3', label: 'B3 共识' },
   { alias: '完美图形', label: '完美图形' },

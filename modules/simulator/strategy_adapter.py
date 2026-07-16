@@ -17,6 +17,7 @@ from . import RawStrategySignal
 # 原始 strategy.value -> (strategy_name, category, action)
 STRATEGY_MAPPING: dict[str, tuple[str, str, str]] = {
     "B1": ("B1", "rebound", "BUY"),
+    "MACD顾问": ("MACD顾问", "advisor", "WATCH"),
     "B2": ("B2", "breakout", "BUY"),
     "B3": ("B3", "consensus", "BUY"),
     "SB1": ("超级B1", "rebound", "BUY"),
@@ -95,6 +96,16 @@ def adapt(signals: list[StrategySignal]) -> list[RawStrategySignal]:
         if not mapped:
             continue
         name, category, action = mapped
+        macd_advisor = (sig.details or {}).get("macd_advisor", {})
+        if macd_advisor and sig.action == "WATCH":
+            # 硬否决或预热不足时，上游信号仍保留用于审计，
+            # 但不再给共振评分贡献 BUY 分。
+            action = "WATCH"
+        if sig.strategy.value == "MACD顾问":
+            action = sig.action
+            if action == "SELL":
+                name = "MACD硬否决"
+                category = "risk"
         # 关键K 特殊处理：根据 description 判断方向
         if name == "关键K":
             action = "SELL" if "阴破位" in (sig.reason or sig.description or "") else "BUY"

@@ -29,6 +29,7 @@ class StrategyType(Enum):
 
     # 基础战法
     B1 = "B1"  # 买点1
+    MACD = "MACD顾问"  # 趋势资格、确认与风险否决（常规优先级仅低于 B1）
     B2 = "B2"  # 买点2（确认）
     B3 = "B3"  # 买点3
     SB1 = "SB1"  # 超级B1
@@ -73,6 +74,19 @@ class Priority(Enum):
     CRITICAL = 3  # 紧急：止损、逃顶
     OPPORTUNITY = 2  # 机会：买点、战法
     OBSERVE = 1  # 观察：提示、减仓、阶段判断
+
+
+# 同一信号优先级内的战法顺序。MACD 的常规顺序固定仅低于 B1；
+# 当 MACD 触发硬否决时，其 Priority 会提升为 CRITICAL，风险规则优先。
+STRATEGY_PRIORITY_RANK: dict[StrategyType, int] = {
+    StrategyType.B1: 100,
+    StrategyType.MACD: 90,
+}
+
+
+def strategy_priority_rank(strategy: StrategyType) -> int:
+    """返回同一 Priority 层内的稳定战法排序值。"""
+    return STRATEGY_PRIORITY_RANK.get(strategy, 0)
 
 
 class Action(Enum):
@@ -253,14 +267,28 @@ def _get_bbi(klines: list[DailyData], index: int) -> float:
     return bbi
 
 
+def _populate_macd_cache(klines: list[DailyData]) -> None:
+    """按 K 线日期一一对齐预计算并挂载完整 MACD 序列。"""
+    if not klines:
+        return
+
+    from ..indicators import precompute_macd_sequence
+
+    difs, deas, hists = precompute_macd_sequence(klines)
+    for index, kline in enumerate(klines):
+        kline.macd_dif = difs[index]
+        kline.macd_dea = deas[index]
+        kline.macd_hist = hists[index]
+
+
 def _get_macd_dif(klines: list[DailyData], index: int) -> float:
     """获取 MACD DIF，有属性直接读取，无属性则动态计算并缓存"""
     today = klines[index]
     if getattr(today, "macd_dif", None) is not None:
         return today.macd_dif or 0.0
-    from ..indicators import calculate_macd
 
-    difs, _, _ = calculate_macd(klines[: index + 1])
-    for i in range(len(difs)):
-        klines[i].macd_dif = difs[i]
+    # calculate_macd 返回的是去掉预热区间的截短序列，直接从下标 0
+    # 写回会把 slow-1 日的 DIF 错挂到第一根 K 线上。这里使用与原始
+    # K 线等长的序列，切片中的对象仍是原对象，因此缓存会正确回写。
+    _populate_macd_cache(klines[: index + 1])
     return today.macd_dif or 0.0

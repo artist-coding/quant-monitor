@@ -247,6 +247,153 @@ def init_tracking_tables(conn: sqlite3.Connection) -> None:
     """)
 
 
+def init_daily_candidate_tables(conn: sqlite3.Connection) -> None:
+    """Create the auditable daily candidate-pool persistence contract."""
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_stock_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_date TEXT NOT NULL,
+            ts_code TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            buy_score REAL NOT NULL,
+            sell_score REAL NOT NULL,
+            position_score REAL NOT NULL,
+            target_position_pct REAL NOT NULL,
+            desired_action TEXT NOT NULL,
+            buy_point_status TEXT NOT NULL,
+            buy_point_confirmed INTEGER NOT NULL DEFAULT 0,
+            primary_variant TEXT DEFAULT '',
+            reference_close REAL NOT NULL,
+            planned_stop_loss REAL,
+            estimated_risk_pct REAL,
+            entry_structure_score REAL NOT NULL,
+            trend_score REAL NOT NULL,
+            volume_score REAL NOT NULL,
+            pattern_quality_score REAL NOT NULL,
+            stage_score REAL NOT NULL,
+            market_score REAL NOT NULL,
+            resonance_score REAL NOT NULL,
+            risk_penalty REAL NOT NULL,
+            raw_components_json TEXT NOT NULL,
+            score_contributions_json TEXT NOT NULL,
+            reasons_json TEXT NOT NULL,
+            hard_vetoes_json TEXT NOT NULL,
+            hard_exit_reasons_json TEXT NOT NULL,
+            market_version TEXT NOT NULL,
+            market_source_hash TEXT NOT NULL,
+            rule_qualification TEXT NOT NULL,
+            strategy_version TEXT NOT NULL,
+            parameter_version TEXT NOT NULL,
+            parameter_fingerprint TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(
+                trade_date,
+                ts_code,
+                strategy_version,
+                parameter_version,
+                parameter_fingerprint
+            )
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_daily_stock_scores_date_rank
+        ON daily_stock_scores(trade_date DESC, buy_score DESC, sell_score ASC)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_daily_stock_scores_code_date
+        ON daily_stock_scores(ts_code, trade_date DESC)
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_candidate_pool_runs (
+            run_id TEXT PRIMARY KEY,
+            trade_date TEXT NOT NULL,
+            universe TEXT NOT NULL,
+            status TEXT NOT NULL,
+            requested_count INTEGER NOT NULL DEFAULT 0,
+            scored_count INTEGER NOT NULL DEFAULT 0,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            minimum_buy_score REAL NOT NULL,
+            candidate_statuses_json TEXT NOT NULL,
+            top_n INTEGER NOT NULL,
+            lookback_bars INTEGER NOT NULL,
+            max_position_pct REAL NOT NULL,
+            market_score REAL NOT NULL,
+            market_version TEXT NOT NULL,
+            market_source_hash TEXT NOT NULL,
+            strategy_version TEXT NOT NULL,
+            parameter_version TEXT NOT NULL,
+            parameter_fingerprint TEXT NOT NULL,
+            request_json TEXT NOT NULL,
+            error_message TEXT DEFAULT '',
+            started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_candidate_runs_date_status
+        ON daily_candidate_pool_runs(trade_date DESC, status, completed_at DESC)
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_candidate_pool_items (
+            run_id TEXT NOT NULL,
+            score_id INTEGER NOT NULL,
+            trade_date TEXT NOT NULL,
+            ts_code TEXT NOT NULL,
+            candidate_rank INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(run_id, ts_code),
+            UNIQUE(run_id, candidate_rank),
+            FOREIGN KEY(run_id) REFERENCES daily_candidate_pool_runs(run_id),
+            FOREIGN KEY(score_id) REFERENCES daily_stock_scores(id)
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_candidate_items_date_rank
+        ON daily_candidate_pool_items(trade_date DESC, candidate_rank ASC)
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_candidate_pool_issues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            ts_code TEXT NOT NULL,
+            issue_type TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(run_id) REFERENCES daily_candidate_pool_runs(run_id)
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_candidate_issues_run
+        ON daily_candidate_pool_issues(run_id, issue_type, ts_code)
+        """
+    )
+
+
 def init_database() -> None:
     """初始化数据库，创建所有表"""
     with get_connection() as conn:
@@ -610,6 +757,7 @@ def init_database() -> None:
 
         # 12. 自我改进系统跟踪表（tracking_tables.sql）
         init_tracking_tables(conn)
+        init_daily_candidate_tables(conn)
 
         print(f"数据库初始化完成: {get_db_path()}")
 

@@ -3,6 +3,26 @@ from ..core import DailyData, calculate_ma, calculate_kdj, calculate_slope
 from .base import calculate_zg_white, calculate_dg_yellow
 
 
+def _right_aligned_indicator_window(
+    bar_count: int,
+    indicator_count: int,
+    window_start: int,
+    window_end: int,
+) -> tuple[int, int]:
+    """Map a K-line window to an indicator series aligned by its last date.
+
+    ``calculate_macd`` intentionally omits its warm-up prefix, so its first DIF
+    value does not belong to the first K-line.  Both series do, however, end on
+    the same trade date.  Mapping through the omitted prefix prevents a price
+    window from being compared with DIF values from different dates.
+    """
+
+    omitted_prefix = max(0, bar_count - indicator_count)
+    start = max(0, window_start - omitted_prefix)
+    end = min(indicator_count, window_end - omitted_prefix)
+    return start, max(start, end)
+
+
 def detect_divergence(klines: list[DailyData], dif_list: list[float]) -> dict:
     """
     顶底背离系统化检测（基于语料标准）
@@ -37,8 +57,9 @@ def detect_divergence(klines: list[DailyData], dif_list: list[float]) -> dict:
         max_close = max(closes[window_start:window_end])
 
         # 对应窗口的DIF最大值
-        dif_window_start = max(0, window_start)
-        dif_window_end = min(len(dif_list), window_end)
+        dif_window_start, dif_window_end = _right_aligned_indicator_window(
+            len(klines), len(dif_list), window_start, window_end
+        )
         if dif_window_end > dif_window_start:
             max_dif = max(dif_list[dif_window_start:dif_window_end])
 
@@ -53,8 +74,9 @@ def detect_divergence(klines: list[DailyData], dif_list: list[float]) -> dict:
     if window_end > window_start:
         min_close = min(closes[window_start:window_end])
 
-        dif_window_start = max(0, window_start)
-        dif_window_end = min(len(dif_list), window_end)
+        dif_window_start, dif_window_end = _right_aligned_indicator_window(
+            len(klines), len(dif_list), window_start, window_end
+        )
         if dif_window_end > dif_window_start:
             min_dif = min(dif_list[dif_window_start:dif_window_end])
 
@@ -141,8 +163,9 @@ def detect_macd_signals(
     signals["is_bottom_divergence"] = div["is_bottom_divergence"]
 
     # === 一票否决权 ===
-    # DIF < 0 + 没有底背离 → 一票否决
-    if dif_today < 0 and not signals["is_bottom_divergence"]:
+    # DIF < 0 时趋势做多默认无资格。底背离只进入观察池，不能自动豁免；
+    # 独立左侧底背离策略必须单独回测且默认关闭。
+    if dif_today < 0:
         signals["macd_veto"] = True
 
     return signals

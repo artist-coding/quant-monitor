@@ -11,6 +11,20 @@ from .core import (
     _dict_to_daily,
     _calc_kdj,
     _calc_bbi,
+    _populate_macd_cache,
+    strategy_priority_rank,
+)
+
+from .macd_advisor import (
+    MacdStrategyConfig,
+    MacdUpstreamSignal,
+    apply_macd_advisor,
+    classify_four_state,
+    detect_confirmed_divergence,
+    detect_cross_failure,
+    detect_synchronization,
+    evaluate_macd_strategy,
+    macd_result_to_signal,
 )
 
 from .base_strategies import detect_b1, detect_b2, detect_b3, detect_sb1
@@ -55,7 +69,15 @@ def _post_process_signals(signals: list[StrategySignal]) -> list[StrategySignal]
     deduped = list(key_map.values())
 
     # 2. 按优先级降序、日期降序排序
-    deduped.sort(key=lambda x: (x.priority.value, x.confidence, x.trade_date), reverse=True)
+    deduped.sort(
+        key=lambda x: (
+            x.priority.value,
+            strategy_priority_rank(x.strategy),
+            x.confidence,
+            x.trade_date,
+        ),
+        reverse=True,
+    )
 
     # 3. 截断：每个策略类型最多保留3个最新信号，总体最多30个
     type_counts: dict[str, int] = {}
@@ -98,9 +120,7 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> list[StrategySignal]
     from ..indicators import (
         precompute_kdj_sequence,
         precompute_bbi_sequence,
-        calculate_macd,
         detect_didi,
-        detect_macd_trap,
         detect_chuhuo_wushi,
         detect_zaihou_chongjian,
         detect_yueyueyushi,
@@ -110,14 +130,12 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> list[StrategySignal]
 
     kdj_sequence = precompute_kdj_sequence(daily_klines)
     bbi_sequence = precompute_bbi_sequence(daily_klines)
-    dif_list, _, _ = calculate_macd(daily_klines)
+    _populate_macd_cache(daily_klines)
 
     # 一次性预计算所有指标并挂载到 DailyData 属性上，消除策略循环检测内的重复计算开销
-    dif_len = len(dif_list) if dif_list else 0
     for idx, k in enumerate(daily_klines):
         k.kdj_k, k.kdj_d, k.kdj_j = kdj_sequence[idx]
         k.bbi = bbi_sequence[idx]
-        k.macd_dif = dif_list[idx] if idx < dif_len else 0.0
 
     # 遍历每一天检测战法
     from ..indicators import detect_kirin_stage
@@ -221,6 +239,32 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> list[StrategySignal]
         if signal:
             signals.append(signal)
 
+        # MACD 顾问在所有上游信号之后运行：常规排序仅低于 B1，
+        # 但硬否决会把同日 BUY 降级为 WATCH，并输出 CRITICAL 风险信号。
+        trade_date = daily_klines[i].trade_date
+        day_signals = [item for item in signals if item.trade_date == trade_date]
+        buy_signals = [item for item in day_signals if item.action == Action.BUY.value]
+        support_broken = any(item.strategy == StrategyType.BRICK_EXIT for item in day_signals)
+        macd_result = evaluate_macd_strategy(
+            daily_klines[: i + 1],
+            upstream_signal=MacdUpstreamSignal(
+                exists=bool(buy_signals),
+                is_trend_long=bool(buy_signals),
+                is_b1=any(item.strategy == StrategyType.B1 for item in buy_signals),
+                key_support_broken=support_broken,
+                s1_present=any(item.strategy == StrategyType.S1 for item in day_signals),
+            ),
+            macd_values=(
+                [item.macd_dif or 0.0 for item in daily_klines[: i + 1]],
+                [item.macd_dea or 0.0 for item in daily_klines[: i + 1]],
+                [item.macd_hist or 0.0 for item in daily_klines[: i + 1]],
+            ),
+        )
+        apply_macd_advisor(day_signals, macd_result)
+        macd_signal = macd_result_to_signal(macd_result)
+        if macd_signal:
+            signals.append(macd_signal)
+
     # ===== P1 指标全局检测（只针对最新一天）======
     if daily_klines:
         # 滴滴战法
@@ -238,37 +282,6 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> list[StrategySignal]
                     reason=f"滴滴战法：高位连续两根阴线下台阶，第二根收盘({didi_result['second_close']}) < 第一根最低({didi_result['first_low']})，量未缩({didi_result['volume_ratio']}倍)",
                 )
             )
-
-        # MACD 金叉空 / 死叉多
-        dif_list_all, dea_list_all, _ = calculate_macd(daily_klines)
-        if dif_list_all and dea_list_all:
-            trap = detect_macd_trap(dif_list_all, dea_list_all)
-            if trap.get("is_gold_trap"):
-                signals.append(
-                    StrategySignal(
-                        ts_code=ts_code,
-                        trade_date=daily_klines[-1].trade_date,
-                        strategy=StrategyType.S1,
-                        action=Action.SELL.value,
-                        confidence=0.85,
-                        description="MACD 金叉空：眼看金叉未成，白线拐头向下，诱多陷阱",
-                        price=daily_klines[-1].close,
-                        reason="MACD 金叉空：眼看金叉未成，白线拐头向下，诱多陷阱",
-                    )
-                )
-            if trap.get("is_dead_trap"):
-                signals.append(
-                    StrategySignal(
-                        ts_code=ts_code,
-                        trade_date=daily_klines[-1].trade_date,
-                        strategy=StrategyType.B1,
-                        action=Action.BUY.value,
-                        confidence=0.85,
-                        description="MACD 死叉多：眼看死叉未成，白线拐头向上，空中加油",
-                        price=daily_klines[-1].close,
-                        reason="MACD 死叉多：眼看死叉未成，白线拐头向上，空中加油",
-                    )
-                )
 
         # 主力出货五式
         chuhuo = detect_chuhuo_wushi(daily_klines)

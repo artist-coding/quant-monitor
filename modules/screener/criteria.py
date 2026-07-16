@@ -55,6 +55,27 @@ def _criteria_b1(klines, score: "StockScore") -> bool:
     return score.b1_score >= 50
 
 
+@_register("macd_eligible")
+def _criteria_macd_eligible(klines, score: "StockScore") -> bool:
+    """筛选具备 MACD 趋势做多资格的标的，不把资格误报成买点。"""
+    from ..strategies import evaluate_macd_strategy
+
+    daily_klines = _dict_to_daily(klines)
+    result = evaluate_macd_strategy(daily_klines)
+    decision = result["decision"]
+    if not result["ready"]:
+        score.warnings.append("MACD预热不足120根K线")
+        return False
+    if decision["warning_codes"]:
+        score.warnings.append(f"MACD:{','.join(decision['warning_codes'])}")
+    if decision["trend_eligible_long"] and not result["divergence"]["strong_top"]:
+        score.reasons.append(
+            f"MACD趋势资格:{result['regime']['phase']}，确认={decision['confirm_codes']}"
+        )
+        return True
+    return False
+
+
 @_register("perfect")
 def _criteria_perfect(klines, score: "StockScore") -> bool:
     return score.score >= 65

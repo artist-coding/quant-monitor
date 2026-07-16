@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 # 策略别名映射（与 cli.py 保持一致）
 STRATEGY_ALIAS = {
     "B1": "b1",
+    "MACD": "macd_eligible",
     "B2": "b2_breakout",
     "B3": "b3_consensus",
     "完美图形": "perfect",
@@ -21,6 +22,7 @@ STRATEGY_ALIAS = {
 
 STRATEGY_DESCRIPTIONS = {
     "B1": "B1 买点 — J 值超卖 + 缩量回调至 BBI 附近",
+    "MACD": "MACD 顾问 — DIF 零轴资格、顺周期、背离与交叉失败过滤（不独立批准买入）",
     "B2": "B2 确认 — B1 后放量长阳突破",
     "B3": "B3 共识 — B2 后小阳线确认",
     "完美图形": "完美图形 — BBI 之上 + 缩量整理 + 均线多头",

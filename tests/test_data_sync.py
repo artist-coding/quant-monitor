@@ -39,7 +39,7 @@ def test_data_syncer_importable_from_top_level_shim():
 
 PUBLIC_METHODS = {
     "sync_stock_basic": {},
-    "sync_daily_kline": {"start_date": None, "end_date": None},
+    "sync_daily_kline": {"start_date": None, "end_date": None, "days": 730},
     "sync_missing": {"days": 730},
     "sync_all_daily_kline": {"ts_codes": None, "days": 730},
     "sync_indicator_cache": {"days": 120},
@@ -267,6 +267,56 @@ def test_batch_sync_maps_codes_to_counts(monkeypatch):
 
     result = syncer._batch_sync("test", sync_fn, ["1", "2", "3"])
     assert result == {"1": 1, "2": 2, "3": 3}
+
+
+def test_all_daily_sync_does_not_skip_yesterdays_close(monkeypatch):
+    """A one-day-old bar must still trigger today's incremental fetch."""
+
+    from datetime import datetime, timedelta
+
+    from modules.data_sync.syncer import DataSyncer
+
+    syncer = DataSyncer(token="dummy", datasource=FakeDataSource())
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+    monkeypatch.setattr(syncer, "_get_last_date", lambda *args: yesterday)
+    calls = []
+    monkeypatch.setattr(
+        syncer,
+        "sync_daily_kline",
+        lambda code, start, end: calls.append((code, start, end)) or 1,
+    )
+    monkeypatch.setattr(
+        syncer,
+        "_batch_sync",
+        lambda task, fn, codes: {code: fn(code) for code in codes},
+    )
+
+    result = syncer.sync_all_daily_kline(["000001.SZ"], days=10)
+
+    assert result == {"000001.SZ": 1}
+    assert len(calls) == 1
+
+
+def test_all_daily_sync_skips_only_when_target_date_is_present(monkeypatch):
+    from datetime import datetime
+
+    from modules.data_sync.syncer import DataSyncer
+
+    syncer = DataSyncer(token="dummy", datasource=FakeDataSource())
+    today = datetime.now().strftime("%Y%m%d")
+    monkeypatch.setattr(syncer, "_get_last_date", lambda *args: today)
+    sync_one = Mock(return_value=1)
+    monkeypatch.setattr(syncer, "sync_daily_kline", sync_one)
+    monkeypatch.setattr(
+        syncer,
+        "_batch_sync",
+        lambda task, fn, codes: {code: fn(code) for code in codes},
+    )
+
+    result = syncer.sync_all_daily_kline(["000001.SZ"], days=10)
+
+    assert result == {"000001.SZ": 0}
+    sync_one.assert_not_called()
 
 
 def test_batch_sync_handles_failure_gracefully(monkeypatch):

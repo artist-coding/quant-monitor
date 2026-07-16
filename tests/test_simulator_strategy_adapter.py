@@ -27,6 +27,39 @@ def test_adapt_maps_strategy_signal():
     assert raw[0].action == "BUY"
 
 
+def test_adapt_downgrades_macd_vetoed_b1() -> None:
+    sig = StrategySignal(
+        ts_code="000001.SZ",
+        trade_date="20240101",
+        strategy=StrategyType.B1,
+        action=Action.WATCH.value,
+        confidence=0.75,
+        description="B1 被 MACD 否决",
+        details={"macd_advisor": {"hard_veto": True}},
+    )
+    raw = adapt([sig])
+
+    assert raw[0].strategy == "B1"
+    assert raw[0].action == "WATCH"
+
+
+def test_adapt_maps_macd_hard_veto_as_risk() -> None:
+    sig = StrategySignal(
+        ts_code="000001.SZ",
+        trade_date="20240101",
+        strategy=StrategyType.MACD,
+        action=Action.SELL.value,
+        confidence=0.95,
+        description="MACD 硬否决",
+        priority=Priority.CRITICAL,
+    )
+    raw = adapt([sig])
+
+    assert raw[0].strategy == "MACD硬否决"
+    assert raw[0].category == "risk"
+    assert raw[0].action == "SELL"
+
+
 def test_filter_by_date_uses_lookback():
     signals = [
         RawStrategySignal("B1", "rebound", "BUY", 0.8, "20240101"),

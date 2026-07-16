@@ -9,14 +9,14 @@ interface CardProps {
 }
 
 export default function Card({ title, children, className = '', highlight = false }: CardProps) {
-  const baseClasses = 'rounded-xl border border-border/40 bg-bg-card backdrop-blur-xl transition-all duration-300 hover:border-border/80 hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/50';
-  const highlightClasses = 'border-accent-gold/40 bg-gradient-to-br from-bg-card to-[rgba(245,158,11,0.05)] shadow-[0_0_30px_-15px_rgba(245,158,11,0.3)] hover:shadow-[0_0_40px_-15px_rgba(245,158,11,0.4)]';
+  const baseClasses = 'glass-panel rounded-2xl transition-[border-color,box-shadow,transform] duration-300 hover:border-white/15 hover:shadow-2xl hover:shadow-black/20';
+  const highlightClasses = 'panel-highlight border-accent-gold/25 bg-gradient-to-br from-[rgba(201,255,99,0.07)] to-bg-card shadow-[0_0_38px_-24px_rgba(201,255,99,0.4)]';
 
   return (
     <div className={`${baseClasses} ${highlight ? highlightClasses : ''} ${className}`}>
       {title && (
-        <div className={`border-b border-border/30 px-5 py-3 ${highlight ? 'bg-gradient-to-r from-accent-gold/[0.06] to-transparent' : ''}`}>
-          <h3 className="text-xs font-bold text-text-primary tracking-[0.15em] uppercase">{title}</h3>
+        <div className={`border-b border-border/30 px-5 py-4 ${highlight ? 'bg-gradient-to-r from-accent-gold/[0.04] to-transparent' : ''}`}>
+          <h3 className="micro-label text-text-secondary">{title}</h3>
         </div>
       )}
       <div className="p-5">{children}</div>

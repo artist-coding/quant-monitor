@@ -8,7 +8,7 @@
 
 **类型**：B站长视频talk（系统性长文口述版本）  
 **来源**：一手素材（此人原话转写）  
-**存放位置**：`references/sources/transcripts/`
+**存放位置**：`docs/archive/references/sources/transcripts/`
 
 ### 核心论点（从 BV1gx411R7ke 提取）
 
