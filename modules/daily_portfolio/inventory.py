@@ -14,7 +14,8 @@ from enum import Enum
 import hashlib
 import json
 import math
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from .dates import normalize_trade_date
 from .models import LifecycleState, PositionState
@@ -94,18 +95,10 @@ class PriceLevel:
         object.__setattr__(self, "value", _money(self.value, field="value", positive=True))
         if not isinstance(self.basis, PriceBasis):
             raise InventoryContractError("basis must be a PriceBasis")
-        object.__setattr__(
-            self, "observed_date", normalize_trade_date(self.observed_date)
-        )
-        fingerprint = _text(
-            self.price_manifest_fingerprint, field="price_manifest_fingerprint"
-        )
-        if len(fingerprint) != 64 or any(
-            char not in "0123456789abcdef" for char in fingerprint
-        ):
-            raise InventoryContractError(
-                "price_manifest_fingerprint must be a lowercase SHA-256"
-            )
+        object.__setattr__(self, "observed_date", normalize_trade_date(self.observed_date))
+        fingerprint = _text(self.price_manifest_fingerprint, field="price_manifest_fingerprint")
+        if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
+            raise InventoryContractError("price_manifest_fingerprint must be a lowercase SHA-256")
         object.__setattr__(self, "price_manifest_fingerprint", fingerprint)
 
     def to_raw(
@@ -158,9 +151,7 @@ class InventoryLot:
         holding_start = normalize_trade_date(self.holding_period_start_date)
         sellable = normalize_trade_date(self.sellable_from)
         if holding_start > acquired:
-            raise InventoryContractError(
-                "holding_period_start_date cannot follow acquired_date"
-            )
+            raise InventoryContractError("holding_period_start_date cannot follow acquired_date")
         if sellable < acquired:
             raise InventoryContractError("sellable_from cannot precede acquired_date")
         object.__setattr__(self, "acquired_date", acquired)
@@ -315,29 +306,21 @@ class PositionLedger:
             raise InventoryContractError("lot stock code differs from ledger")
         if len({lot.lot_id for lot in lots}) != len(lots):
             raise InventoryContractError("lot_id values must be unique")
-        ordered_lots = tuple(
-            sorted(lots, key=lambda lot: (lot.acquired_date, lot.lot_id))
-        )
+        ordered_lots = tuple(sorted(lots, key=lambda lot: (lot.acquired_date, lot.lot_id)))
         if lots != ordered_lots:
             raise InventoryContractError("lots must be ordered by acquisition and id")
         if any(not isinstance(item, CashReceivable) for item in receivables):
-            raise InventoryContractError(
-                "cash_receivables must contain CashReceivable values"
-            )
+            raise InventoryContractError("cash_receivables must contain CashReceivable values")
         if any(not isinstance(item, ShareEntitlement) for item in entitlements):
-            raise InventoryContractError(
-                "share_entitlements must contain ShareEntitlement values"
-            )
-        entitlement_ids = [item.entitlement_id for item in (*receivables, *entitlements)]
+            raise InventoryContractError("share_entitlements must contain ShareEntitlement values")
+        entitlement_ids = [item.entitlement_id for item in receivables] + [item.entitlement_id for item in entitlements]
         if len(set(entitlement_ids)) != len(entitlement_ids):
             raise InventoryContractError("entitlement_id values must be unique")
         actions = tuple(self.applied_action_ids)
         if any(not isinstance(item, str) or not item for item in actions):
             raise InventoryContractError("applied_action_ids must be non-empty strings")
         if len(set(actions)) != len(actions) or actions != tuple(sorted(actions)):
-            raise InventoryContractError(
-                "applied_action_ids must be unique and sorted"
-            )
+            raise InventoryContractError("applied_action_ids must be unique and sorted")
         if self.global_stop is not None and not isinstance(self.global_stop, PriceLevel):
             raise InventoryContractError("global_stop must be a PriceLevel or None")
         object.__setattr__(
@@ -358,17 +341,11 @@ class PositionLedger:
 
     @property
     def total_cost_basis_cash(self) -> Decimal:
-        return sum(
-            (lot.remaining_cost_basis_cash for lot in self.lots), Decimal("0")
-        )
+        return sum((lot.remaining_cost_basis_cash for lot in self.lots), Decimal("0"))
 
     @property
     def avg_cost(self) -> Decimal:
-        return (
-            self.total_cost_basis_cash / self.shares
-            if self.shares
-            else Decimal("0")
-        )
+        return self.total_cost_basis_cash / self.shares if self.shares else Decimal("0")
 
     def available_shares(self, as_of_date: str) -> int:
         date = normalize_trade_date(as_of_date)
@@ -376,9 +353,7 @@ class PositionLedger:
 
     def next_unlock_date(self, as_of_date: str) -> str:
         date = normalize_trade_date(as_of_date)
-        future = sorted(
-            {lot.sellable_from for lot in self.lots if lot.sellable_from > date}
-        )
+        future = sorted({lot.sellable_from for lot in self.lots if lot.sellable_from > date})
         return future[0] if future else ""
 
     def snapshot(
@@ -398,17 +373,11 @@ class PositionLedger:
         if not shares:
             return PositionState(ts_code=self.ts_code)
         available = self.available_shares(date)
-        lifecycle = (
-            LifecycleState.HOLDING
-            if available == shares
-            else LifecycleState.LOCKED
-        )
+        lifecycle = LifecycleState.HOLDING if available == shares else LifecycleState.LOCKED
         stop = raw_stop_price
         if stop is None and self.global_stop is not None:
             if self.global_stop.basis != PriceBasis.RAW:
-                raise InventoryContractError(
-                    "raw_stop_price is required for an adjusted global stop"
-                )
+                raise InventoryContractError("raw_stop_price is required for an adjusted global stop")
             stop = float(self.global_stop.value)
         return PositionState(
             ts_code=self.ts_code,
@@ -416,9 +385,7 @@ class PositionLedger:
             shares=shares,
             available_shares=available,
             avg_cost=float(self.avg_cost),
-            current_position_pct=min(
-                1.0, shares * raw_mark_price / portfolio_equity
-            ),
+            current_position_pct=min(1.0, shares * raw_mark_price / portfolio_equity),
             stop_loss=stop,
             can_sell_date=self.next_unlock_date(date),
         )
@@ -429,9 +396,7 @@ class PositionLedger:
             "ts_code": self.ts_code,
             "lots": [lot.as_dict() for lot in self.lots],
             "cash_receivables": [item.as_dict() for item in self.cash_receivables],
-            "share_entitlements": [
-                item.as_dict() for item in self.share_entitlements
-            ],
+            "share_entitlements": [item.as_dict() for item in self.share_entitlements],
             "applied_action_ids": list(self.applied_action_ids),
             "global_stop": self.global_stop.as_dict() if self.global_stop else None,
             "lot_selection_policy": self.lot_selection_policy,
@@ -475,9 +440,7 @@ def add_buy_lot(
         holding_period_start_date=execution_date,
         shares=shares,
         sellable_from=sellable_from,
-        remaining_cost_basis_cash=_money(
-            cost_basis_cash, field="cost_basis_cash", positive=True
-        ),
+        remaining_cost_basis_cash=_money(cost_basis_cash, field="cost_basis_cash", positive=True),
         source_kind=LotSourceKind.BUY_FILL,
         source_id=source_id,
         provenance=provenance,
@@ -510,9 +473,7 @@ def consume_sellable_fifo(
         if taken == lot.shares:
             consumed_cost = lot.remaining_cost_basis_cash
         else:
-            consumed_cost = (
-                lot.remaining_cost_basis_cash * Decimal(taken) / Decimal(lot.shares)
-            )
+            consumed_cost = lot.remaining_cost_basis_cash * Decimal(taken) / Decimal(lot.shares)
         consumptions.append(
             LotConsumption(
                 lot_id=lot.lot_id,
@@ -527,9 +488,7 @@ def consume_sellable_fifo(
                 replace(
                     lot,
                     shares=left,
-                    remaining_cost_basis_cash=(
-                        lot.remaining_cost_basis_cash - consumed_cost
-                    ),
+                    remaining_cost_basis_cash=(lot.remaining_cost_basis_cash - consumed_cost),
                 )
             )
     if remaining:
@@ -539,9 +498,7 @@ def consume_sellable_fifo(
         lots=tuple(updated),
         global_stop=ledger.global_stop if updated else None,
     )
-    total = sum(
-        (item.cost_basis_cash for item in consumptions), Decimal("0")
-    )
+    total = sum((item.cost_basis_cash for item in consumptions), Decimal("0"))
     return SellLotResult(
         ledger=new_ledger,
         consumptions=tuple(consumptions),
@@ -569,13 +526,9 @@ def ledger_from_position_state(
         return PositionLedger(ts_code=position.ts_code)
     locked = position.shares - position.available_shares
     if locked and not position.can_sell_date:
-        raise InventoryContractError(
-            "locked aggregate shares require an explicit can_sell_date"
-        )
+        raise InventoryContractError("locked aggregate shares require an explicit can_sell_date")
     if not locked and position.can_sell_date:
-        raise InventoryContractError(
-            "fully available aggregate shares cannot carry can_sell_date"
-        )
+        raise InventoryContractError("fully available aggregate shares cannot carry can_sell_date")
     total_cost = Decimal(str(position.avg_cost)) * Decimal(position.shares)
     lots: list[InventoryLot] = []
     for suffix, shares, sellable in (

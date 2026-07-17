@@ -189,8 +189,10 @@ def evaluate_stock(
 
     # simple 模式同样执行 MACD 最终会诊，避免只在 resonance 模式落实否决。
     macd_result = None
-    if "B1" in signals and len(klines) >= 120 and all(
-        isinstance(getattr(item, "close", None), (int, float)) for item in klines
+    if (
+        "B1" in signals
+        and len(klines) >= 120
+        and all(isinstance(getattr(item, "close", None), (int, float)) for item in klines)
     ):
         macd_result = evaluate_macd_strategy(
             klines,
@@ -198,9 +200,7 @@ def evaluate_stock(
         )
         if macd_result["decision"]["hard_veto"]:
             signals.append("MACD硬否决")
-            score.warnings.append(
-                f"MACD顾问否决:{','.join(macd_result['decision']['warning_codes'])}"
-            )
+            score.warnings.append(f"MACD顾问否决:{','.join(macd_result['decision']['warning_codes'])}")
         elif macd_result["decision"]["entry_ready"]:
             signals.append("MACD趋势资格")
 

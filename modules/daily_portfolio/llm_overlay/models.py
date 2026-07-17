@@ -12,7 +12,8 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Mapping, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Mapping
 
 from ..dates import TradeDateError, normalize_trade_date
 from ..models import TradeAction
@@ -90,9 +91,7 @@ def _enum_value(enum_type: type[EnumT], value: Any, *, field: str) -> EnumT:
         return enum_type(value)
     except ValueError as exc:
         allowed = ", ".join(item.value for item in enum_type)
-        raise OverlayValidationError(
-            f"{field} has invalid value {value!r}; allowed: {allowed}"
-        ) from exc
+        raise OverlayValidationError(f"{field} has invalid value {value!r}; allowed: {allowed}") from exc
 
 
 def _strict_int(value: Any, *, field: str) -> int:
@@ -116,10 +115,7 @@ def _string_tuple(
 ) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         raise OverlayValidationError(f"{field} must be an array of strings")
-    result = tuple(
-        _nonempty_string(item, field=f"{field}[{index}]")
-        for index, item in enumerate(value)
-    )
+    result = tuple(_nonempty_string(item, field=f"{field}[{index}]") for index, item in enumerate(value))
     if not allow_empty and not result:
         raise OverlayValidationError(f"{field} must not be empty")
     if unique and len(set(result)) != len(result):
@@ -142,13 +138,8 @@ def _freeze_json(value: Any, *, field: str) -> Any:
             frozen[key] = _freeze_json(item, field=f"{field}.{key}")
         return MappingProxyType(frozen)
     if isinstance(value, (list, tuple)):
-        return tuple(
-            _freeze_json(item, field=f"{field}[{index}]")
-            for index, item in enumerate(value)
-        )
-    raise OverlayValidationError(
-        f"{field} contains unsupported JSON value {type(value).__name__}"
-    )
+        return tuple(_freeze_json(item, field=f"{field}[{index}]") for index, item in enumerate(value))
+    raise OverlayValidationError(f"{field} contains unsupported JSON value {type(value).__name__}")
 
 
 def _plain_json(value: Any) -> Any:
@@ -186,6 +177,9 @@ def _is_action_step_consistent(
 
 
 class _CanonicalContract:
+    def to_dict(self) -> dict[str, Any]:
+        raise NotImplementedError
+
     def canonical_json(self) -> str:
         return canonical_json(self.to_dict())
 
@@ -219,7 +213,7 @@ class EvidenceItem(_CanonicalContract):
         object.__setattr__(self, "value", _freeze_json(self.value, field="value"))
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "EvidenceItem":
+    def from_dict(cls, data: Mapping[str, Any]) -> EvidenceItem:
         _strict_keys(data, cls._FIELDS, label="EvidenceItem")
         return cls(
             ref_id=data["ref_id"],
@@ -281,12 +275,8 @@ class EvidenceSnapshot(_CanonicalContract):
 
     def __post_init__(self) -> None:
         if self.schema_version != "quant-evidence-v1":
-            raise OverlayValidationError(
-                "schema_version must be quant-evidence-v1"
-            )
-        object.__setattr__(
-            self, "as_of_date", _normalize_date(self.as_of_date, field="as_of_date")
-        )
+            raise OverlayValidationError("schema_version must be quant-evidence-v1")
+        object.__setattr__(self, "as_of_date", _normalize_date(self.as_of_date, field="as_of_date"))
         object.__setattr__(
             self,
             "last_bar_date",
@@ -295,22 +285,16 @@ class EvidenceSnapshot(_CanonicalContract):
         object.__setattr__(
             self,
             "market_context_date",
-            _normalize_date(
-                self.market_context_date, field="market_context_date"
-            ),
+            _normalize_date(self.market_context_date, field="market_context_date"),
         )
         if self.last_bar_date != self.as_of_date:
             raise OverlayValidationError("last_bar_date must equal as_of_date")
         if self.market_context_date != self.as_of_date:
-            raise OverlayValidationError(
-                "market_context_date must equal as_of_date"
-            )
+            raise OverlayValidationError("market_context_date must equal as_of_date")
         _nonempty_string(self.ts_code, field="ts_code")
         _nonempty_string(self.strategy_version, field="strategy_version")
         _nonempty_string(self.parameter_version, field="parameter_version")
-        _nonempty_string(
-            self.parameter_fingerprint, field="parameter_fingerprint"
-        )
+        _nonempty_string(self.parameter_fingerprint, field="parameter_fingerprint")
         if not isinstance(self.quant_action, TradeAction):
             raise OverlayValidationError("quant_action must be a TradeAction")
         current_step = _strict_int(self.current_step, field="current_step")
@@ -323,23 +307,15 @@ class EvidenceSnapshot(_CanonicalContract):
         # position above the configured hard maximum.  It can be a current
         # state, never a target state.
         if not 0 <= current_step <= max_step + 1:
-            raise OverlayValidationError(
-                "current_step must be between 0 and max_step + 1"
-            )
+            raise OverlayValidationError("current_step must be between 0 and max_step + 1")
         if not 0 <= target_step <= max_step:
-            raise OverlayValidationError(
-                "quant_target_step must be between 0 and max_step"
-            )
+            raise OverlayValidationError("quant_target_step must be between 0 and max_step")
         if max_adjustment != 1:
             raise OverlayValidationError("max_adjustment is frozen at 1")
 
         allowed_actions = tuple(self.allowed_actions)
-        if not allowed_actions or any(
-            not isinstance(action, TradeAction) for action in allowed_actions
-        ):
-            raise OverlayValidationError(
-                "allowed_actions must contain one or more TradeAction values"
-            )
+        if not allowed_actions or any(not isinstance(action, TradeAction) for action in allowed_actions):
+            raise OverlayValidationError("allowed_actions must contain one or more TradeAction values")
         if len(set(allowed_actions)) != len(allowed_actions):
             raise OverlayValidationError("allowed_actions must not contain duplicates")
         if self.quant_action not in allowed_actions:
@@ -352,13 +328,9 @@ class EvidenceSnapshot(_CanonicalContract):
         ref_ids = tuple(item.ref_id for item in evidence)
         if len(set(ref_ids)) != len(ref_ids):
             raise OverlayValidationError("evidence ref_id values must be unique")
-        future_refs = [
-            item.ref_id for item in evidence if item.observed_date > self.as_of_date
-        ]
+        future_refs = [item.ref_id for item in evidence if item.observed_date > self.as_of_date]
         if future_refs:
-            raise OverlayValidationError(
-                "future evidence is not allowed: " + ", ".join(future_refs)
-            )
+            raise OverlayValidationError("future evidence is not allowed: " + ", ".join(future_refs))
         object.__setattr__(self, "evidence", evidence)
         object.__setattr__(
             self,
@@ -368,44 +340,22 @@ class EvidenceSnapshot(_CanonicalContract):
         object.__setattr__(
             self,
             "hard_exit_reasons",
-            _string_tuple(
-                self.hard_exit_reasons, field="hard_exit_reasons", unique=True
-            ),
+            _string_tuple(self.hard_exit_reasons, field="hard_exit_reasons", unique=True),
         )
         self._validate_quant_action_steps()
         if self.hard_exit_reasons:
-            expected_action = (
-                TradeAction.EXIT if current_step > 0 else TradeAction.BLOCK
-            )
+            expected_action = TradeAction.EXIT if current_step > 0 else TradeAction.BLOCK
             if self.quant_action != expected_action or target_step != 0:
-                raise OverlayValidationError(
-                    "hard_exit_reasons require a zero-target quant EXIT/BLOCK"
-                )
+                raise OverlayValidationError("hard_exit_reasons require a zero-target quant EXIT/BLOCK")
         if self.hard_vetoes:
             if target_step > current_step:
-                raise OverlayValidationError(
-                    "hard_vetoes cannot increase the quant target step"
-                )
+                raise OverlayValidationError("hard_vetoes cannot increase the quant target step")
             if current_step == 0 and self.quant_action != TradeAction.BLOCK:
-                raise OverlayValidationError(
-                    "a flat hard-veto snapshot must use quant BLOCK"
-                )
-        if (
-            self.hard_vetoes
-            and current_step == 0
-            and TradeAction.BLOCK not in allowed_actions
-        ):
-            raise OverlayValidationError(
-                "allowed_actions must include BLOCK when hard_vetoes are present"
-            )
-        if (
-            self.hard_exit_reasons
-            and current_step > 0
-            and TradeAction.EXIT not in allowed_actions
-        ):
-            raise OverlayValidationError(
-                "allowed_actions must include EXIT when hard_exit_reasons are present"
-            )
+                raise OverlayValidationError("a flat hard-veto snapshot must use quant BLOCK")
+        if self.hard_vetoes and current_step == 0 and TradeAction.BLOCK not in allowed_actions:
+            raise OverlayValidationError("allowed_actions must include BLOCK when hard_vetoes are present")
+        if self.hard_exit_reasons and current_step > 0 and TradeAction.EXIT not in allowed_actions:
+            raise OverlayValidationError("allowed_actions must include EXIT when hard_exit_reasons are present")
 
     def _validate_quant_action_steps(self) -> None:
         if not _is_action_step_consistent(
@@ -413,16 +363,14 @@ class EvidenceSnapshot(_CanonicalContract):
             current_step=self.current_step,
             target_step=self.quant_target_step,
         ):
-            raise OverlayValidationError(
-                "quant_action is inconsistent with current_step and quant_target_step"
-            )
+            raise OverlayValidationError("quant_action is inconsistent with current_step and quant_target_step")
 
     @property
     def evidence_ref_ids(self) -> frozenset[str]:
         return frozenset(item.ref_id for item in self.evidence)
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "EvidenceSnapshot":
+    def from_dict(cls, data: Mapping[str, Any]) -> EvidenceSnapshot:
         _strict_keys(data, cls._FIELDS, label="EvidenceSnapshot")
         if not isinstance(data["allowed_actions"], (list, tuple)):
             raise OverlayValidationError("allowed_actions must be an array")
@@ -437,31 +385,18 @@ class EvidenceSnapshot(_CanonicalContract):
             strategy_version=data["strategy_version"],
             parameter_version=data["parameter_version"],
             parameter_fingerprint=data["parameter_fingerprint"],
-            quant_action=_enum_value(
-                TradeAction, data["quant_action"], field="quant_action"
-            ),
+            quant_action=_enum_value(TradeAction, data["quant_action"], field="quant_action"),
             current_step=_strict_int(data["current_step"], field="current_step"),
-            quant_target_step=_strict_int(
-                data["quant_target_step"], field="quant_target_step"
-            ),
+            quant_target_step=_strict_int(data["quant_target_step"], field="quant_target_step"),
             max_step=_strict_int(data["max_step"], field="max_step"),
             allowed_actions=tuple(
-                _enum_value(
-                    TradeAction, value, field=f"allowed_actions[{index}]"
-                )
+                _enum_value(TradeAction, value, field=f"allowed_actions[{index}]")
                 for index, value in enumerate(data["allowed_actions"])
             ),
-            evidence=tuple(
-                EvidenceItem.from_dict(item)
-                for item in data["evidence"]
-            ),
+            evidence=tuple(EvidenceItem.from_dict(item) for item in data["evidence"]),
             hard_vetoes=_string_tuple(data["hard_vetoes"], field="hard_vetoes"),
-            hard_exit_reasons=_string_tuple(
-                data["hard_exit_reasons"], field="hard_exit_reasons"
-            ),
-            max_adjustment=_strict_int(
-                data["max_adjustment"], field="max_adjustment"
-            ),
+            hard_exit_reasons=_string_tuple(data["hard_exit_reasons"], field="hard_exit_reasons"),
+            max_adjustment=_strict_int(data["max_adjustment"], field="max_adjustment"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -516,16 +451,10 @@ class OverlayProposal(_CanonicalContract):
 
     def __post_init__(self) -> None:
         if self.schema_version != "overlay-decision-v1":
-            raise OverlayValidationError(
-                "schema_version must be overlay-decision-v1"
-            )
-        adjustment = _strict_int(
-            self.position_step_adjustment, field="position_step_adjustment"
-        )
+            raise OverlayValidationError("schema_version must be overlay-decision-v1")
+        adjustment = _strict_int(self.position_step_adjustment, field="position_step_adjustment")
         if adjustment not in (-1, 0, 1):
-            raise OverlayValidationError(
-                "position_step_adjustment must be one of -1, 0, 1"
-            )
+            raise OverlayValidationError("position_step_adjustment must be one of -1, 0, 1")
         if not isinstance(self.buy_disposition, BuyDisposition):
             raise OverlayValidationError("buy_disposition must be a BuyDisposition")
         confidence = _strict_int(self.confidence, field="confidence")
@@ -556,9 +485,7 @@ class OverlayProposal(_CanonicalContract):
         object.__setattr__(
             self,
             "invalidation_conditions",
-            _string_tuple(
-                self.invalidation_conditions, field="invalidation_conditions"
-            ),
+            _string_tuple(self.invalidation_conditions, field="invalidation_conditions"),
         )
         object.__setattr__(
             self,
@@ -574,7 +501,7 @@ class OverlayProposal(_CanonicalContract):
         data: Mapping[str, Any],
         *,
         snapshot: EvidenceSnapshot,
-    ) -> "OverlayProposal":
+    ) -> OverlayProposal:
         _strict_keys(data, cls._FIELDS, label="OverlayProposal")
         proposal = cls(
             schema_version=data["schema_version"],
@@ -582,20 +509,12 @@ class OverlayProposal(_CanonicalContract):
                 data["position_step_adjustment"],
                 field="position_step_adjustment",
             ),
-            buy_disposition=_enum_value(
-                BuyDisposition, data["buy_disposition"], field="buy_disposition"
-            ),
+            buy_disposition=_enum_value(BuyDisposition, data["buy_disposition"], field="buy_disposition"),
             confidence=_strict_int(data["confidence"], field="confidence"),
-            agreement=_enum_value(
-                QuantAgreement, data["agreement"], field="agreement"
-            ),
+            agreement=_enum_value(QuantAgreement, data["agreement"], field="agreement"),
             reasons=_string_tuple(data["reasons"], field="reasons"),
-            counter_arguments=_string_tuple(
-                data["counter_arguments"], field="counter_arguments"
-            ),
-            evidence_refs=_string_tuple(
-                data["evidence_refs"], field="evidence_refs"
-            ),
+            counter_arguments=_string_tuple(data["counter_arguments"], field="counter_arguments"),
+            evidence_refs=_string_tuple(data["evidence_refs"], field="evidence_refs"),
             invalidation_conditions=_string_tuple(
                 data["invalidation_conditions"],
                 field="invalidation_conditions",
@@ -608,23 +527,15 @@ class OverlayProposal(_CanonicalContract):
 
     def validate_against(self, snapshot: EvidenceSnapshot) -> None:
         if abs(self.position_step_adjustment) > snapshot.max_adjustment:
-            raise OverlayValidationError(
-                "position_step_adjustment exceeds snapshot.max_adjustment"
-            )
+            raise OverlayValidationError("position_step_adjustment exceeds snapshot.max_adjustment")
         unknown = sorted(set(self.evidence_refs) - snapshot.evidence_ref_ids)
         if unknown:
-            raise OverlayValidationError(
-                "unknown evidence_ref values: " + ", ".join(unknown)
-            )
+            raise OverlayValidationError("unknown evidence_ref values: " + ", ".join(unknown))
         if self.buy_disposition != BuyDisposition.UNCHANGED:
             if snapshot.quant_action not in (TradeAction.OPEN, TradeAction.ADD):
-                raise OverlayValidationError(
-                    "buy_disposition WATCH/BLOCK requires quant OPEN or ADD"
-                )
+                raise OverlayValidationError("buy_disposition WATCH/BLOCK requires quant OPEN or ADD")
             if self.position_step_adjustment > 0:
-                raise OverlayValidationError(
-                    "a downgraded buy cannot also request a positive adjustment"
-                )
+                raise OverlayValidationError("a downgraded buy cannot also request a positive adjustment")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -676,9 +587,7 @@ class GuardrailDecision(_CanonicalContract):
 
     def __post_init__(self) -> None:
         if self.schema_version != "guardrail-decision-v1":
-            raise OverlayValidationError(
-                "schema_version must be guardrail-decision-v1"
-            )
+            raise OverlayValidationError("schema_version must be guardrail-decision-v1")
         if not isinstance(self.mode, DecisionMode):
             raise OverlayValidationError("mode must be a DecisionMode")
         for name, action in (
@@ -688,9 +597,7 @@ class GuardrailDecision(_CanonicalContract):
             if not isinstance(action, TradeAction):
                 raise OverlayValidationError(f"{name} must be a TradeAction")
         current = _strict_int(self.current_step, field="current_step")
-        quant_target = _strict_int(
-            self.quant_target_step, field="quant_target_step"
-        )
+        quant_target = _strict_int(self.quant_target_step, field="quant_target_step")
         final_target = _strict_int(self.final_target_step, field="final_target_step")
         max_step = _strict_int(self.max_step, field="max_step")
         # As in EvidenceSnapshot, max_step + 1 denotes an existing overflow
@@ -699,12 +606,8 @@ class GuardrailDecision(_CanonicalContract):
             raise OverlayValidationError("decision step bounds are invalid")
         if not 0 <= quant_target <= max_step or not 0 <= final_target <= max_step:
             raise OverlayValidationError("decision target steps are out of bounds")
-        if any(
-            not isinstance(event, GuardrailEvent) for event in self.guardrail_events
-        ):
-            raise OverlayValidationError(
-                "guardrail_events must contain GuardrailEvent values"
-            )
+        if any(not isinstance(event, GuardrailEvent) for event in self.guardrail_events):
+            raise OverlayValidationError("guardrail_events must contain GuardrailEvent values")
         object.__setattr__(self, "guardrail_events", tuple(self.guardrail_events))
         if len(set(self.guardrail_events)) != len(self.guardrail_events):
             raise OverlayValidationError("guardrail_events must not contain duplicates")
@@ -713,62 +616,39 @@ class GuardrailDecision(_CanonicalContract):
             current_step=current,
             target_step=quant_target,
         ):
-            raise OverlayValidationError(
-                "quant_action is inconsistent with current_step and quant_target_step"
-            )
+            raise OverlayValidationError("quant_action is inconsistent with current_step and quant_target_step")
         if not _is_action_step_consistent(
             self.final_action,
             current_step=current,
             target_step=final_target,
         ):
-            raise OverlayValidationError(
-                "final_action is inconsistent with current_step and final_target_step"
-            )
+            raise OverlayValidationError("final_action is inconsistent with current_step and final_target_step")
 
         if self.mode == DecisionMode.QUANT_ONLY:
             if self.final_action != self.quant_action or final_target != quant_target:
-                raise OverlayValidationError(
-                    "QUANT_ONLY must preserve the exact quant action and target"
-                )
-            if (
-                self.requested_position_step_adjustment is not None
-                or self.buy_disposition is not None
-            ):
-                raise OverlayValidationError(
-                    "QUANT_ONLY cannot contain an overlay proposal"
-                )
+                raise OverlayValidationError("QUANT_ONLY must preserve the exact quant action and target")
+            if self.requested_position_step_adjustment is not None or self.buy_disposition is not None:
+                raise OverlayValidationError("QUANT_ONLY cannot contain an overlay proposal")
         else:
             requested = _strict_int(
                 self.requested_position_step_adjustment,
                 field="requested_position_step_adjustment",
             )
             if requested not in (-1, 0, 1):
-                raise OverlayValidationError(
-                    "requested_position_step_adjustment must be -1, 0, or 1"
-                )
+                raise OverlayValidationError("requested_position_step_adjustment must be -1, 0, or 1")
             if not isinstance(self.buy_disposition, BuyDisposition):
-                raise OverlayValidationError(
-                    "QUANT_LLM_OVERLAY requires buy_disposition"
-                )
+                raise OverlayValidationError("QUANT_LLM_OVERLAY requires buy_disposition")
             if self.fallback_reason is not None:
-                raise OverlayValidationError(
-                    "QUANT_LLM_OVERLAY cannot contain fallback_reason"
-                )
-        if self.fallback_reason is not None and not isinstance(
-            self.fallback_reason, FallbackReason
-        ):
-            raise OverlayValidationError(
-                "fallback_reason must be a FallbackReason or null"
-            )
+                raise OverlayValidationError("QUANT_LLM_OVERLAY cannot contain fallback_reason")
+        if self.fallback_reason is not None and not isinstance(self.fallback_reason, FallbackReason):
+            raise OverlayValidationError("fallback_reason must be a FallbackReason or null")
         if not isinstance(self.requires_human_review, bool):
             raise OverlayValidationError("requires_human_review must be a boolean")
         if self.mode == DecisionMode.QUANT_ONLY and self.requires_human_review:
-            raise OverlayValidationError(
-                "QUANT_ONLY cannot require review for a discarded proposal"
-            )
+            raise OverlayValidationError("QUANT_ONLY cannot require review for a discarded proposal")
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "GuardrailDecision":
+    def from_dict(cls, data: Mapping[str, Any]) -> GuardrailDecision:
         _strict_keys(data, cls._FIELDS, label="GuardrailDecision")
         events = data["guardrail_events"]
         if not isinstance(events, (list, tuple)):
@@ -780,46 +660,24 @@ class GuardrailDecision(_CanonicalContract):
             schema_version=data["schema_version"],
             mode=_enum_value(DecisionMode, data["mode"], field="mode"),
             current_step=_strict_int(data["current_step"], field="current_step"),
-            quant_action=_enum_value(
-                TradeAction, data["quant_action"], field="quant_action"
-            ),
-            quant_target_step=_strict_int(
-                data["quant_target_step"], field="quant_target_step"
-            ),
-            final_action=_enum_value(
-                TradeAction, data["final_action"], field="final_action"
-            ),
-            final_target_step=_strict_int(
-                data["final_target_step"], field="final_target_step"
-            ),
+            quant_action=_enum_value(TradeAction, data["quant_action"], field="quant_action"),
+            quant_target_step=_strict_int(data["quant_target_step"], field="quant_target_step"),
+            final_action=_enum_value(TradeAction, data["final_action"], field="final_action"),
+            final_target_step=_strict_int(data["final_target_step"], field="final_target_step"),
             max_step=_strict_int(data["max_step"], field="max_step"),
             requested_position_step_adjustment=(
-                None
-                if requested is None
-                else _strict_int(
-                    requested, field="requested_position_step_adjustment"
-                )
+                None if requested is None else _strict_int(requested, field="requested_position_step_adjustment")
             ),
             buy_disposition=(
-                None
-                if disposition is None
-                else _enum_value(
-                    BuyDisposition, disposition, field="buy_disposition"
-                )
+                None if disposition is None else _enum_value(BuyDisposition, disposition, field="buy_disposition")
             ),
             requires_human_review=data["requires_human_review"],
             guardrail_events=tuple(
-                _enum_value(
-                    GuardrailEvent, value, field=f"guardrail_events[{index}]"
-                )
+                _enum_value(GuardrailEvent, value, field=f"guardrail_events[{index}]")
                 for index, value in enumerate(events)
             ),
             fallback_reason=(
-                None
-                if fallback is None
-                else _enum_value(
-                    FallbackReason, fallback, field="fallback_reason"
-                )
+                None if fallback is None else _enum_value(FallbackReason, fallback, field="fallback_reason")
             ),
         )
 
@@ -834,12 +692,8 @@ class GuardrailDecision(_CanonicalContract):
             "final_target_step": self.final_target_step,
             "max_step": self.max_step,
             "requested_position_step_adjustment": self.requested_position_step_adjustment,
-            "buy_disposition": (
-                self.buy_disposition.value if self.buy_disposition else None
-            ),
+            "buy_disposition": (self.buy_disposition.value if self.buy_disposition else None),
             "requires_human_review": self.requires_human_review,
             "guardrail_events": [event.value for event in self.guardrail_events],
-            "fallback_reason": (
-                self.fallback_reason.value if self.fallback_reason else None
-            ),
+            "fallback_reason": (self.fallback_reason.value if self.fallback_reason else None),
         }

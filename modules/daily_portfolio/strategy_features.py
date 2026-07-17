@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from ..indicators import (
     DailyData,
@@ -77,11 +78,7 @@ def _ratio(numerator: float, denominator: float) -> float | None:
 
 
 def _amplitude_pct(bar: DailyData) -> float | None:
-    return (
-        (bar.high - bar.low) / bar.prev_close * 100
-        if bar.prev_close > 0
-        else None
-    )
+    return (bar.high - bar.low) / bar.prev_close * 100 if bar.prev_close > 0 else None
 
 
 def _n_structure_ok(bars: Sequence[DailyData], index: int) -> bool | None:
@@ -109,9 +106,7 @@ def _b1_variants(
     today = bars[index]
     j = kdj[index][2] if index >= 8 else None
     amplitude = _amplitude_pct(today)
-    volume_ratio = (
-        _ratio(today.vol, bars[index - 1].vol) if index > 0 else None
-    )
+    volume_ratio = _ratio(today.vol, bars[index - 1].vol) if index > 0 else None
     pct_in_range = -2 <= today.pct_chg <= 1.8
     loose_flags: tuple[bool | None, ...] = (
         j < 13 if j is not None else None,
@@ -121,9 +116,7 @@ def _b1_variants(
     )
     observed_loose = [flag for flag in loose_flags if flag is not None]
     loose_count = sum(flag is True for flag in observed_loose)
-    loose_strength = (
-        loose_count / len(observed_loose) * 100 if observed_loose else None
-    )
+    loose_strength = loose_count / len(observed_loose) * 100 if observed_loose else None
     loose = VariantEvidence(
         name="b1.loose_3of4",
         matched=len(observed_loose) == 4 and loose_count >= 3,
@@ -141,11 +134,7 @@ def _b1_variants(
         name="b1.strict_oversold",
         matched=len(observed_strict) == 2 and all(observed_strict),
         strength=(
-            sum(flag is True for flag in observed_strict)
-            / len(observed_strict)
-            * 100
-            if observed_strict
-            else None
+            sum(flag is True for flag in observed_strict) / len(observed_strict) * 100 if observed_strict else None
         ),
         details={"four_down_closes": four_down},
     )
@@ -167,11 +156,7 @@ def _b1_variants(
         name="b1.quality_confirmed",
         matched=len(observed_quality) == 5 and all(observed_quality),
         strength=(
-            sum(flag is True for flag in observed_quality)
-            / len(observed_quality)
-            * 100
-            if observed_quality
-            else None
+            sum(flag is True for flag in observed_quality) / len(observed_quality) * 100 if observed_quality else None
         ),
         details={
             "white_above_yellow": white_above_yellow,
@@ -224,9 +209,7 @@ def _b2_variants(
     j = kdj[index][2] if index >= 8 else None
     volume_ratio = _ratio(today.vol, bars[index - 1].vol) if index > 0 else None
 
-    knowledge_anchor = _with_anchor_date(
-        _latest_anchor(b1_history, index, "b1.quality_confirmed", 1, 5), bars
-    )
+    knowledge_anchor = _with_anchor_date(_latest_anchor(b1_history, index, "b1.quality_confirmed", 1, 5), bars)
     knowledge_conditions: tuple[bool | None, ...] = (
         knowledge_anchor is not None,
         today.pct_chg >= 4,
@@ -242,9 +225,7 @@ def _b2_variants(
         details={"volume_ratio_prev": volume_ratio, "kdj_j": j},
     )
 
-    legacy_anchor = _with_anchor_date(
-        _latest_anchor(b1_history, index, "b1.strict_oversold", 5, 14), bars
-    )
+    legacy_anchor = _with_anchor_date(_latest_anchor(b1_history, index, "b1.strict_oversold", 5, 14), bars)
     legacy_conditions: tuple[bool | None, ...] = (
         legacy_anchor is not None,
         today.pct_chg >= 4,
@@ -254,11 +235,7 @@ def _b2_variants(
     legacy = VariantEvidence(
         name="b2.legacy_5_14bar",
         matched=len(legacy_observed) == 3 and all(legacy_observed),
-        strength=(
-            sum(condition is True for condition in legacy_observed)
-            / len(legacy_observed)
-            * 100
-        ),
+        strength=(sum(condition is True for condition in legacy_observed) / len(legacy_observed) * 100),
         anchor=legacy_anchor[1] if legacy_anchor else None,
         details={"volume_ratio_prev": volume_ratio, "kdj_j": j},
     )
@@ -273,9 +250,7 @@ def _b3_variants(
     today = bars[index]
     amplitude = _amplitude_pct(today)
 
-    pullback_anchor = _with_anchor_date(
-        _latest_anchor(b2_history, index, "b2.knowledge_5bar", 2, 5), bars
-    )
+    pullback_anchor = _with_anchor_date(_latest_anchor(b2_history, index, "b2.knowledge_5bar", 2, 5), bars)
     pullback_volume_ratio: float | None = None
     pullback_not_break: bool | None = None
     if pullback_anchor:
@@ -300,25 +275,17 @@ def _b3_variants(
         },
     )
 
-    continuation_anchor = _with_anchor_date(
-        _latest_anchor(b2_history, index, "b2.knowledge_5bar", 3, 9), bars
-    )
+    continuation_anchor = _with_anchor_date(_latest_anchor(b2_history, index, "b2.knowledge_5bar", 3, 9), bars)
     continuation_conditions: tuple[bool | None, ...] = (
         continuation_anchor is not None,
         0 < today.pct_chg < 2,
         amplitude < 7 if amplitude is not None else None,
     )
-    continuation_observed = [
-        condition for condition in continuation_conditions if condition is not None
-    ]
+    continuation_observed = [condition for condition in continuation_conditions if condition is not None]
     continuation = VariantEvidence(
         name="b3.consensus_continuation",
         matched=len(continuation_observed) == 3 and all(continuation_observed),
-        strength=(
-            sum(condition is True for condition in continuation_observed)
-            / len(continuation_observed)
-            * 100
-        ),
+        strength=(sum(condition is True for condition in continuation_observed) / len(continuation_observed) * 100),
         anchor=continuation_anchor[1] if continuation_anchor else None,
         details={"amplitude_prev_close_pct": amplitude},
     )
@@ -389,10 +356,7 @@ def _sb1_variants(
         anchor=washout_anchor,
         details={"volume_shrinking": shrink, "kdj_j": j},
     )
-    return {
-        item.name: item
-        for item in (false_break_evidence, reclaim_evidence, washout_evidence)
-    }
+    return {item.name: item for item in (false_break_evidence, reclaim_evidence, washout_evidence)}
 
 
 def _exit_variants(bars: list[DailyData], index: int) -> dict[str, VariantEvidence]:
@@ -409,9 +373,7 @@ def _exit_variants(bars: list[DailyData], index: int) -> dict[str, VariantEviden
     s2_anchor = None
     if s2 and s2.details.get("prev_high_date"):
         anchor_date = str(s2.details["prev_high_date"])
-        anchor_index = next(
-            item for item, bar in enumerate(bars) if bar.trade_date == anchor_date
-        )
+        anchor_index = next(item for item, bar in enumerate(bars) if bar.trade_date == anchor_date)
         s2_anchor = AnchorEvidence(
             anchor_date=anchor_date,
             age_bars=index - anchor_index,
@@ -476,10 +438,7 @@ def build_strategy_features(
     kdj = precompute_kdj_sequence(enriched)
 
     b1_history = [_b1_variants(enriched, kdj, item) for item in range(len(enriched))]
-    b2_history = [
-        _b2_variants(enriched, kdj, b1_history, item)
-        for item in range(len(enriched))
-    ]
+    b2_history = [_b2_variants(enriched, kdj, b1_history, item) for item in range(len(enriched))]
     variants = dict(b1_history[index])
     variants.update(b2_history[index])
     variants.update(_b3_variants(enriched, b2_history, index))
@@ -497,11 +456,7 @@ def build_strategy_features(
     j = kdj[index][2] if index >= 8 else None
     volume_ratio_prev = _ratio(today.vol, previous.vol) if previous else None
     recent_volumes = [bar.vol for bar in enriched[max(0, index - 5) : index]]
-    volume_ratio_5d = (
-        _ratio(today.vol, sum(recent_volumes) / len(recent_volumes))
-        if recent_volumes
-        else None
-    )
+    volume_ratio_5d = _ratio(today.vol, sum(recent_volumes) / len(recent_volumes)) if recent_volumes else None
 
     continuous: dict[str, float | int | None] = {
         "kdj_k": kdj[index][0] if index >= 8 else None,
@@ -510,24 +465,14 @@ def build_strategy_features(
         "pct_chg": today.pct_chg,
         "amplitude_prev_close_pct": amplitude,
         "body_pct": (today.close - today.open) / today.open * 100,
-        "open_gap_pct": (
-            (today.open - today.prev_close) / today.prev_close * 100
-            if today.prev_close > 0
-            else None
-        ),
-        "close_position": (
-            (today.close - today.low) / day_range if day_range > 0 else 0.5
-        ),
+        "open_gap_pct": ((today.open - today.prev_close) / today.prev_close * 100 if today.prev_close > 0 else None),
+        "close_position": ((today.close - today.low) / day_range if day_range > 0 else 0.5),
         "volume_ratio_prev": volume_ratio_prev,
         "volume_ratio_5d": volume_ratio_5d,
         "runup_20_pct": (high_20 - low_20) / low_20 * 100,
         "distance_to_high_20_pct": (today.close / high_20 - 1) * 100,
-        "distance_to_bbi_pct": (
-            (today.close / bbi - 1) * 100 if bbi and bbi > 0 else None
-        ),
-        "white_yellow_spread_pct": (
-            (white / yellow - 1) * 100 if white and yellow and yellow > 0 else None
-        ),
+        "distance_to_bbi_pct": ((today.close / bbi - 1) * 100 if bbi and bbi > 0 else None),
+        "white_yellow_spread_pct": ((white / yellow - 1) * 100 if white and yellow and yellow > 0 else None),
     }
     four_down = _four_down_closes(enriched, index)
     n_structure = _n_structure_ok(enriched, index)
@@ -553,11 +498,7 @@ def build_strategy_features(
         "near_20d_high": today.close >= high_20 * 0.90,
     }
 
-    anchors = {
-        name: evidence.anchor
-        for name, evidence in variants.items()
-        if evidence.anchor is not None
-    }
+    anchors = {name: evidence.anchor for name, evidence in variants.items() if evidence.anchor is not None}
     missing: list[str] = []
     if index + 1 < 9:
         missing.append("kdj")

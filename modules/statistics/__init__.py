@@ -63,6 +63,9 @@ def _calculate_sharpe(returns: list[float], rf: float = 0.0) -> float:
     mean_ret = sum(returns) / n
     daily_rf = rf / 252.0  # 日无风险利率
 
+    if max(returns) == min(returns):
+        return 0.0
+
     # 样本标准差（除以 n-1）
     variance = sum((r - mean_ret) ** 2 for r in returns) / (n - 1)
     std_ret = math.sqrt(variance) if variance > 0 else 0.0
@@ -155,7 +158,7 @@ def _bootstrap_ci(
     rf: float = 0.0,
     n_iterations: int = 1000,
     alpha: float = 0.05,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> tuple[float, float, int]:
     """
     Bootstrap 置信区间
@@ -246,7 +249,7 @@ def monte_carlo_permutation_test(
     rf: float = 0.0,
     n_permutations: int = 1000,
     alpha: float = 0.05,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> MonteCarloTestResult:
     """
     Monte Carlo 置换检验
@@ -284,8 +287,6 @@ def monte_carlo_permutation_test(
 
     # 2. 置换检验
     permuted_sharpes = []
-    n = len(returns)
-
     for _ in range(n_permutations):
         # 打乱收益率序列（模拟随机信号日期）
         permuted = returns.copy()
@@ -378,11 +379,6 @@ def analyze_sub_periods(
     for trade in trades:
         trade_date = trade.get("date", "")
         pnl = trade.get("pnl_pct", 0.0)
-        holding_days = trade.get("holding_days", 1)
-
-        # 将单笔收益平摊到持仓期（简化处理）
-        daily_pnl = pnl / holding_days if holding_days > 0 else pnl
-
         regime = market_regimes.get(trade_date, "unknown")
         if regime == "bull":
             bull_trades.append(trade)

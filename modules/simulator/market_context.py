@@ -219,7 +219,7 @@ def precompute_market_contexts(
     earliest = min(dates)
     raw_all = ds.get_kline_dicts(index_code, days=len(dates) + 150, end_date=max(dates))
     index_klines: list[DailyData] = []
-    for k in (raw_all or []):
+    for k in raw_all or []:
         if "ts_code" not in k:
             k["ts_code"] = index_code
         index_klines.append(DailyData(**k))

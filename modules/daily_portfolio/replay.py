@@ -33,9 +33,7 @@ from .models import (
 )
 
 
-ScoreProvider: TypeAlias = Callable[
-    [tuple[DailyData, ...], PositionState, Any], DailyStockScore
-]
+ScoreProvider: TypeAlias = Callable[[tuple[DailyData, ...], PositionState, Any], DailyStockScore]
 MarketProvider: TypeAlias = Callable[[str], Any]
 
 
@@ -113,7 +111,7 @@ def _order_sort_key(order: PendingOrder) -> tuple[str, int, str]:
 
 def _normalize_calendar(
     bars: Sequence[DailyData], trading_dates: Sequence[str] | None
-) -> tuple[str, dict[str, DailyData], str]:
+) -> tuple[tuple[str, ...], dict[str, DailyData], str]:
     if not bars:
         raise ValueError("bars cannot be empty")
 
@@ -145,9 +143,7 @@ def _normalize_calendar(
         raise ValueError("trading_dates must be strictly ascending")
     missing = set(bars_by_date).difference(normalized)
     if missing:
-        raise ValueError(
-            f"trading_dates do not contain bar dates: {sorted(missing)}"
-        )
+        raise ValueError(f"trading_dates do not contain bar dates: {sorted(missing)}")
     calendar = normalized
 
     return calendar, bars_by_date, ts_code
@@ -164,9 +160,7 @@ def _next_trading_date(
     return following_trading_date
 
 
-def _mark_position(
-    position: PositionState, cash: float, mark_price: float
-) -> PositionState:
+def _mark_position(position: PositionState, cash: float, mark_price: float) -> PositionState:
     if mark_price <= 0:
         return position
     equity = cash + position.shares * mark_price
@@ -190,13 +184,9 @@ def _previous_close(bar: DailyData, latest_close: float | None) -> float | None:
     return latest_close if latest_close is not None and latest_close > 0 else None
 
 
-def _reschedule_strict_sell(
-    order: PendingOrder, current_date: str, next_date: str
-) -> PendingOrder:
+def _reschedule_strict_sell(order: PendingOrder, current_date: str, next_date: str) -> PendingOrder:
     attempted = (
-        order
-        if order.planned_execution_date == current_date
-        else replace(order, planned_execution_date=current_date)
+        order if order.planned_execution_date == current_date else replace(order, planned_execution_date=current_date)
     )
     if next_date:
         return replace(
@@ -222,18 +212,14 @@ def _latch_hard_exit_next_open(
     """Persist an unfilled same-close hard exit as one sticky NEXT_OPEN order."""
 
     if not next_date:
-        raise ValueError(
-            "a blocked same-close hard exit requires the next exchange trading date"
-        )
+        raise ValueError("a blocked same-close hard exit requires the next exchange trading date")
 
     candidate = create_sell_order(
         score,
         ExecutionMode.NEXT_OPEN_STRICT,
         next_date,
     )
-    existing_sells = tuple(
-        order for order in pending if order.side == OrderSide.SELL
-    )
+    existing_sells = tuple(order for order in pending if order.side == OrderSide.SELL)
     if not existing_sells:
         candidate = replace(
             candidate,
@@ -250,13 +236,9 @@ def _latch_hard_exit_next_open(
             order.planned_execution_date,
         ),
     )
-    candidate_is_stronger = (
-        candidate.target_position_pct < most_defensive.target_position_pct
-        or (
-            candidate.target_position_pct == most_defensive.target_position_pct
-            and candidate.planned_execution_date
-            < most_defensive.planned_execution_date
-        )
+    candidate_is_stronger = candidate.target_position_pct < most_defensive.target_position_pct or (
+        candidate.target_position_pct == most_defensive.target_position_pct
+        and candidate.planned_execution_date < most_defensive.planned_execution_date
     )
     if not candidate_is_stronger:
         return pending, most_defensive, ()
@@ -280,16 +262,12 @@ def _quote_snapshot(
         ts_code=bar.ts_code,
         trade_date=normalize_trade_date(bar.trade_date),
         price_type=order.price_type,
-        execution_price=(
-            bar.open if order.price_type == PriceType.NEXT_OPEN else bar.close
-        ),
+        execution_price=(bar.open if order.price_type == PriceType.NEXT_OPEN else bar.close),
         previous_close=previous_close,
     )
 
 
-def _validate_score(
-    score: DailyStockScore, *, ts_code: str, trade_date: str
-) -> None:
+def _validate_score(score: DailyStockScore, *, ts_code: str, trade_date: str) -> None:
     if not isinstance(score, DailyStockScore):
         raise TypeError("score_provider must return DailyStockScore")
     if score.ts_code != ts_code:
@@ -329,11 +307,7 @@ def replay_daily_stock(
     if initial_cash < 0:
         raise ValueError("initial_cash cannot be negative")
 
-    following = (
-        normalize_trade_date(following_trading_date)
-        if following_trading_date
-        else ""
-    )
+    following = normalize_trade_date(following_trading_date) if following_trading_date else ""
     if following and following <= calendar[-1]:
         raise ValueError("following_trading_date must be after the replay calendar")
 
@@ -370,16 +344,10 @@ def replay_daily_stock(
         day_rejections: list[ReplayRejection] = []
 
         due = sorted(
-            (
-                order
-                for order in pending
-                if order.planned_execution_date <= trade_date
-            ),
+            (order for order in pending if order.planned_execution_date <= trade_date),
             key=_order_sort_key,
         )
-        pending = [
-            order for order in pending if order.planned_execution_date > trade_date
-        ]
+        pending = [order for order in pending if order.planned_execution_date > trade_date]
 
         for original_order in due:
             if original_order.price_type != PriceType.NEXT_OPEN:
@@ -415,9 +383,7 @@ def replay_daily_stock(
 
             if bar is None:
                 if is_strict_sell:
-                    rolled = _reschedule_strict_sell(
-                        attempted_order, trade_date, next_date
-                    )
+                    rolled = _reschedule_strict_sell(attempted_order, trade_date, next_date)
                     pending.append(rolled)
                     rejection = ReplayRejection(
                         trade_date=trade_date,
@@ -438,11 +404,7 @@ def replay_daily_stock(
                 continue
 
             equity = _portfolio_equity(cash, position, bar.open)
-            if (
-                attempted_order.side == OrderSide.BUY
-                and config.t1_enabled
-                and not next_date
-            ):
+            if attempted_order.side == OrderSide.BUY and config.t1_enabled and not next_date:
                 rejection = ReplayRejection(
                     trade_date=trade_date,
                     phase="OPEN",
@@ -462,11 +424,7 @@ def replay_daily_stock(
                 previous_close=previous_close,
                 config=config,
                 is_st=is_st_provider(quote) if is_st_provider else False,
-                tradable_at_execution=(
-                    tradability_provider(quote, attempted_order)
-                    if tradability_provider
-                    else True
-                ),
+                tradable_at_execution=(tradability_provider(quote, attempted_order) if tradability_provider else True),
                 next_trading_date=next_date,
             )
             position, cash = execution.position, execution.cash
@@ -475,15 +433,10 @@ def replay_daily_stock(
 
             should_roll = is_strict_sell and (
                 execution.status == ExecutionStatus.PARTIAL
-                or (
-                    execution.status == ExecutionStatus.BLOCKED
-                    and execution.reason != "目标仓位无需成交"
-                )
+                or (execution.status == ExecutionStatus.BLOCKED and execution.reason != "目标仓位无需成交")
             )
             if should_roll:
-                rolled = _reschedule_strict_sell(
-                    attempted_order, trade_date, next_date
-                )
+                rolled = _reschedule_strict_sell(attempted_order, trade_date, next_date)
                 pending.append(rolled)
                 rejection = ReplayRejection(
                     trade_date=trade_date,
@@ -510,10 +463,7 @@ def replay_daily_stock(
                     ReplayRejection(
                         trade_date=trade_date,
                         phase="OPEN",
-                        reason=(
-                            execution.reason
-                            or "买单部分成交，未成交余量取消且不顺延"
-                        ),
+                        reason=(execution.reason or "买单部分成交，未成交余量取消且不顺延"),
                         order=attempted_order,
                     )
                 )
@@ -548,12 +498,8 @@ def replay_daily_stock(
                         )
                     )
             elif score.desired_action in (TradeAction.REDUCE, TradeAction.EXIT):
-                cancelled_buys = [
-                    order for order in pending if order.side == OrderSide.BUY
-                ]
-                pending = [
-                    order for order in pending if order.side != OrderSide.BUY
-                ]
+                cancelled_buys = [order for order in pending if order.side == OrderSide.BUY]
+                pending = [order for order in pending if order.side != OrderSide.BUY]
                 for cancelled in cancelled_buys:
                     day_rejections.append(
                         ReplayRejection(
@@ -578,9 +524,7 @@ def replay_daily_stock(
                         config=config,
                         is_st=is_st_provider(quote) if is_st_provider else False,
                         tradable_at_execution=(
-                            tradability_provider(quote, close_order)
-                            if tradability_provider
-                            else True
+                            tradability_provider(quote, close_order) if tradability_provider else True
                         ),
                         next_trading_date=next_date,
                     )
@@ -624,13 +568,11 @@ def replay_daily_stock(
                         )
                     )
                     if hard_exit_unfinished:
-                        pending, latched_order, replaced_sells = (
-                            _latch_hard_exit_next_open(
-                                pending,
-                                score,
-                                close_order,
-                                next_date,
-                            )
+                        pending, latched_order, replaced_sells = _latch_hard_exit_next_open(
+                            pending,
+                            score,
+                            close_order,
+                            next_date,
                         )
                         for replaced_sell in replaced_sells:
                             day_rejections.append(
@@ -654,12 +596,8 @@ def replay_daily_stock(
                             )
                         )
                     elif is_hard_exit and position.shares == 0:
-                        stale_sells = [
-                            order for order in pending if order.side == OrderSide.SELL
-                        ]
-                        pending = [
-                            order for order in pending if order.side != OrderSide.SELL
-                        ]
+                        stale_sells = [order for order in pending if order.side == OrderSide.SELL]
+                        pending = [order for order in pending if order.side != OrderSide.SELL]
                         for stale_sell in stale_sells:
                             day_rejections.append(
                                 ReplayRejection(
@@ -672,9 +610,7 @@ def replay_daily_stock(
                             )
                 elif next_date:
                     candidate = create_sell_order(score, exit_mode, next_date)
-                    existing_sells = [
-                        order for order in pending if order.side == OrderSide.SELL
-                    ]
+                    existing_sells = [order for order in pending if order.side == OrderSide.SELL]
                     if not existing_sells:
                         pending.append(candidate)
                     else:
@@ -682,10 +618,8 @@ def replay_daily_stock(
                             existing_sells,
                             key=lambda order: order.target_position_pct,
                         )
-                        should_replace = (
-                            candidate.target_position_pct
-                            < most_defensive.target_position_pct
-                            or bool(score.hard_exit_reasons)
+                        should_replace = candidate.target_position_pct < most_defensive.target_position_pct or bool(
+                            score.hard_exit_reasons
                         )
                         if should_replace:
                             candidate = replace(
@@ -693,11 +627,7 @@ def replay_daily_stock(
                                 root_order_id=most_defensive.root_order_id,
                                 supersedes_order_id=most_defensive.order_id,
                             )
-                            pending = [
-                                order
-                                for order in pending
-                                if order.side != OrderSide.SELL
-                            ]
+                            pending = [order for order in pending if order.side != OrderSide.SELL]
                             pending.append(candidate)
                             for replaced in existing_sells:
                                 day_rejections.append(
@@ -770,9 +700,7 @@ def replay_daily_stock(
         rejections=tuple(all_rejections),
         final_position=position,
         final_cash=cash,
-        final_equity=round(
-            cash + position.shares * (latest_close or position.avg_cost), 2
-        ),
+        final_equity=round(cash + position.shares * (latest_close or position.avg_cost), 2),
         pending_orders=tuple(sorted(pending, key=_order_sort_key)),
         calendar_source="EXPLICIT_EXCHANGE_CALENDAR",
     )
@@ -803,8 +731,6 @@ def replay_exit_mode_pair(
     return PairedExitReplayResult(
         same_close_research=research,
         next_open_strict=strict,
-        final_equity_difference=round(
-            research.final_equity - strict.final_equity, 2
-        ),
+        final_equity_difference=round(research.final_equity - strict.final_equity, 2),
         fill_count_difference=len(research.fills) - len(strict.fills),
     )

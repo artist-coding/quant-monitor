@@ -106,7 +106,10 @@ def load_market_snapshots(path_value: str) -> MarketSnapshotBundle:
     for index, item in enumerate(raw_snapshots):
         if not isinstance(item, Mapping):
             raise ValueError(f"市场快照 snapshots[{index}] 必须是对象")
-        trade_date = normalize_trade_date(item.get("trade_date"))
+        raw_trade_date = item.get("trade_date")
+        if not isinstance(raw_trade_date, str):
+            raise ValueError(f"市场快照 snapshots[{index}].trade_date 必须是字符串")
+        trade_date = normalize_trade_date(raw_trade_date)
         if trade_date in snapshots:
             raise ValueError(f"市场快照存在重复日期: {trade_date}")
         score = _finite_number(item.get("score"), label=f"snapshots[{index}].score")
@@ -124,9 +127,7 @@ def load_market_snapshots(path_value: str) -> MarketSnapshotBundle:
     )
 
 
-def load_exchange_calendar(
-    path_value: str, *, expected_exchange: str
-) -> ExchangeCalendarBundle:
+def load_exchange_calendar(path_value: str, *, expected_exchange: str) -> ExchangeCalendarBundle:
     """Load a strictly ordered, explicit exchange calendar from JSON."""
 
     payload, file_hash = _read_json_file(path_value, label="交易日历")
@@ -139,9 +140,7 @@ def load_exchange_calendar(
         raise ValueError("交易日历 exchange 不能为空")
     exchange = exchange.strip().upper()
     if exchange != expected_exchange.strip().upper():
-        raise ValueError(
-            f"交易日历 exchange={exchange} 与 --exchange={expected_exchange} 不一致"
-        )
+        raise ValueError(f"交易日历 exchange={exchange} 与 --exchange={expected_exchange} 不一致")
     if not isinstance(source, str) or not source.strip():
         raise ValueError("交易日历 source 不能为空")
     if not isinstance(raw_dates, list) or not raw_dates:
@@ -160,9 +159,7 @@ def load_exchange_calendar(
     )
 
 
-def _load_position(
-    path_value: str | None, *, ts_code: str
-) -> tuple[PositionState, dict[str, Any]]:
+def _load_position(path_value: str | None, *, ts_code: str) -> tuple[PositionState, dict[str, Any]]:
     if not path_value:
         return PositionState(ts_code=ts_code), {"source": "CLI_DEFAULT_FLAT"}
 
@@ -196,30 +193,20 @@ def _load_position(
     if position_code != ts_code:
         raise ValueError("持仓文件 ts_code 与命令股票代码不一致")
     shares = _nonnegative_integer(raw_position.get("shares", 0), label="shares")
-    available_shares = _nonnegative_integer(
-        raw_position.get("available_shares", shares), label="available_shares"
-    )
+    available_shares = _nonnegative_integer(raw_position.get("available_shares", shares), label="available_shares")
     avg_cost = _finite_number(raw_position.get("avg_cost", 0), label="avg_cost")
     if shares > 0 and "current_position_pct" not in raw_position:
         raise ValueError("已有持仓时必须显式提供 current_position_pct")
-    current_position_pct = _finite_number(
-        raw_position.get("current_position_pct", 0), label="current_position_pct"
-    )
+    current_position_pct = _finite_number(raw_position.get("current_position_pct", 0), label="current_position_pct")
     if shares > 0 and avg_cost <= 0:
         raise ValueError("已有持仓时 avg_cost 必须大于 0")
     raw_stop_loss = raw_position.get("stop_loss")
     if shares > 0 and raw_stop_loss is None:
         raise ValueError("已有持仓时必须显式提供 stop_loss")
-    stop_loss = (
-        None
-        if raw_stop_loss is None
-        else _finite_number(raw_stop_loss, label="stop_loss")
-    )
+    stop_loss = None if raw_stop_loss is None else _finite_number(raw_stop_loss, label="stop_loss")
     lifecycle_default = LifecycleState.HOLDING if shares > 0 else LifecycleState.FLAT
     try:
-        lifecycle = LifecycleState(
-            raw_position.get("lifecycle_state", lifecycle_default.value)
-        )
+        lifecycle = LifecycleState(raw_position.get("lifecycle_state", lifecycle_default.value))
     except ValueError as exc:
         raise ValueError("持仓 lifecycle_state 无效") from exc
 
@@ -236,9 +223,7 @@ def _load_position(
     return position, {"source": "EXPLICIT_POSITION_FILE", "source_hash": file_hash}
 
 
-def _rows_to_daily_bars(
-    rows: Sequence[Mapping[str, Any]], *, expected_ts_code: str
-) -> tuple[DailyData, ...]:
+def _rows_to_daily_bars(rows: Sequence[Mapping[str, Any]], *, expected_ts_code: str) -> tuple[DailyData, ...]:
     if not rows:
         raise ValueError(f"没有找到 {expected_ts_code} 的日线数据")
 
@@ -251,7 +236,10 @@ def _rows_to_daily_bars(
         row_code = str(row.get("ts_code", expected_ts_code))
         if row_code != expected_ts_code:
             raise ValueError(f"K线包含其他股票: {row_code}")
-        trade_date = normalize_trade_date(row.get("trade_date"))
+        raw_trade_date = row.get("trade_date")
+        if not isinstance(raw_trade_date, str):
+            raise ValueError(f"K线[{index}].trade_date 必须是字符串")
+        trade_date = normalize_trade_date(raw_trade_date)
         normalized_dates.append(trade_date)
         open_price = _finite_number(row.get("open"), label=f"K线[{index}].open")
         high = _finite_number(row.get("high"), label=f"K线[{index}].high")
@@ -259,11 +247,7 @@ def _rows_to_daily_bars(
         close = _finite_number(row.get("close"), label=f"K线[{index}].close")
         volume = _finite_number(row.get("vol", 0), label=f"K线[{index}].vol")
         amount_value = row.get("amount")
-        amount = (
-            close * volume
-            if amount_value is None
-            else _finite_number(amount_value, label=f"K线[{index}].amount")
-        )
+        amount = close * volume if amount_value is None else _finite_number(amount_value, label=f"K线[{index}].amount")
         explicit_previous = row.get("prev_close", row.get("pre_close"))
         prev_close = (
             _finite_number(explicit_previous, label=f"K线[{index}].prev_close")
@@ -271,9 +255,7 @@ def _rows_to_daily_bars(
             else previous_close or close
         )
         pct_value = row.get("pct_chg")
-        pct_chg = (
-            (close / prev_close - 1) * 100 if pct_value is None and prev_close > 0 else 0.0
-        )
+        pct_chg = (close / prev_close - 1) * 100 if pct_value is None and prev_close > 0 else 0.0
         if pct_value is not None:
             pct_chg = _finite_number(pct_value, label=f"K线[{index}].pct_chg")
         if min(open_price, high, low, close) <= 0:
@@ -376,12 +358,8 @@ def _score_payload(
         "buy_score_contract": {
             "raw_components": evaluation.adapted_evidence.score_evidence.buy.as_mapping(),
             "weights": dict(config.score_weights.buy),
-            "weighted_contributions": dict(
-                evaluation.aggregated_scores.buy_contributions
-            ),
-            "risk_penalty_points": (
-                evaluation.adapted_evidence.score_evidence.risk_penalty_points
-            ),
+            "weighted_contributions": dict(evaluation.aggregated_scores.buy_contributions),
+            "risk_penalty_points": (evaluation.adapted_evidence.score_evidence.risk_penalty_points),
             "final_buy_score": evaluation.aggregated_scores.buy_score,
             "open_threshold": config.thresholds.open_buy_score,
             "add_threshold": config.thresholds.add_buy_score,
@@ -400,9 +378,7 @@ def _score_payload(
             "missing_fields": list(evaluation.features.missing_fields),
             "hard_vetoes": list(evaluation.features.hard_vetoes),
             "eligibility_gates": dict(evaluation.features.eligibility_gates),
-            "variant_evidence": _json_value(
-                evaluation.features.variant_evidence
-            ),
+            "variant_evidence": _json_value(evaluation.features.variant_evidence),
         },
         "diagnostics": evaluation.adapted_evidence.diagnostics,
     }
@@ -556,9 +532,7 @@ def _buy_backtest_payload(
             "research_config": dict(result.research_config),
             "research_config_fingerprint": result.research_config_fingerprint,
             "confirmation_policy_version": result.confirmation_policy_version,
-            "confirmation_policy_fingerprint": (
-                result.confirmation_policy_fingerprint
-            ),
+            "confirmation_policy_fingerprint": (result.confirmation_policy_fingerprint),
             "feature_versions": list(result.feature_versions),
             "bar_data_fingerprint": result.bar_data_fingerprint,
             "calendar_fingerprint": result.calendar_fingerprint,
@@ -594,9 +568,7 @@ def _cmd_score(args: Any) -> None:
     market_snapshot = market_bundle.snapshots.get(as_of_date)
     if market_snapshot is None:
         raise ValueError(f"市场快照缺少评分日 {as_of_date}")
-    position, position_provenance = _load_position(
-        args.position_file, ts_code=args.ts_code
-    )
+    position, position_provenance = _load_position(args.position_file, ts_code=args.ts_code)
     datasource = _resolve_datasource(args.data_source)
     rows = datasource.get_kline_dicts(
         args.ts_code,
@@ -631,11 +603,7 @@ def _cmd_score(args: Any) -> None:
         return
     score = evaluation.score
     buy_point = evaluation.buy_point
-    primary_variant = (
-        buy_point.primary_confirming_variant
-        or buy_point.primary_variant
-        or "-"
-    )
+    primary_variant = buy_point.primary_confirming_variant or buy_point.primary_variant or "-"
     print(
         f"{score.ts_code} {score.signal_date} "
         f"买入分={score.buy_score:.1f} 卖出分={score.sell_score:.1f} "
@@ -666,9 +634,7 @@ def _cmd_backtest_buy(args: Any) -> None:
     if start_date > end_date:
         raise ValueError("--start 不能晚于 --end")
     if args.data_source != "sqlite":
-        raise ValueError(
-            "backtest-buy 在双价格接入前仅允许 sqlite RAW 数据源"
-        )
+        raise ValueError("backtest-buy 在双价格接入前仅允许 sqlite RAW 数据源")
     _validate_common_numeric_args(
         max_position_pct=1.0,
         history_bars=args.warmup_bars,
@@ -677,12 +643,8 @@ def _cmd_backtest_buy(args: Any) -> None:
     if not math.isfinite(args.standardized_equity) or args.standardized_equity <= 0:
         raise ValueError("--standardized-equity 必须为正数")
 
-    calendar_bundle = load_exchange_calendar(
-        args.calendar_file, expected_exchange=args.exchange
-    )
-    period_dates = tuple(
-        item for item in calendar_bundle.dates if start_date <= item <= end_date
-    )
+    calendar_bundle = load_exchange_calendar(args.calendar_file, expected_exchange=args.exchange)
+    period_dates = tuple(item for item in calendar_bundle.dates if start_date <= item <= end_date)
     if not period_dates:
         raise ValueError("交易日历在买点回测区间内没有开放交易日")
     future_dates = tuple(item for item in calendar_bundle.dates if item > end_date)
@@ -693,8 +655,7 @@ def _cmd_backtest_buy(args: Any) -> None:
     fetched_future_sessions = max(2, required_future_sessions * 2)
     if len(future_dates) < fetched_future_sessions:
         raise ValueError(
-            "交易日历必须在 --end 后至少包含 "
-            f"{fetched_future_sessions} 个交易日，用于覆盖个股停牌和结果观察"
+            f"交易日历必须在 --end 后至少包含 {fetched_future_sessions} 个交易日，用于覆盖个股停牌和结果观察"
         )
     outcome_end_date = future_dates[fetched_future_sessions - 1]
 
@@ -710,19 +671,12 @@ def _cmd_backtest_buy(args: Any) -> None:
     validate_bars_as_of(all_bars, outcome_end_date)
     warmup_count = sum(bar.trade_date < start_date for bar in all_bars)
     if warmup_count < _MINIMUM_HISTORY_BARS:
-        raise ValueError(
-            "实际预热K线不足 "
-            f"{_MINIMUM_HISTORY_BARS} 根（仅 {warmup_count} 根），拒绝买点回测"
-        )
-    signal_bar_dates = {
-        bar.trade_date for bar in all_bars if start_date <= bar.trade_date <= end_date
-    }
+        raise ValueError(f"实际预热K线不足 {_MINIMUM_HISTORY_BARS} 根（仅 {warmup_count} 根），拒绝买点回测")
+    signal_bar_dates = {bar.trade_date for bar in all_bars if start_date <= bar.trade_date <= end_date}
     if not signal_bar_dates:
         raise ValueError("买点回测区间内没有个股日线数据")
     last_signal_bar_date = max(signal_bar_dates)
-    future_stock_bar_count = sum(
-        bar.trade_date > last_signal_bar_date for bar in all_bars
-    )
+    future_stock_bar_count = sum(bar.trade_date > last_signal_bar_date for bar in all_bars)
     if future_stock_bar_count < required_future_sessions:
         raise ValueError(
             "末端买点的未来个股K线不足 "
@@ -785,23 +739,14 @@ def _cmd_backtest_buy(args: Any) -> None:
         f"证据={candidate_primary.evidence_status.value}"
     )
     for metrics in result.selected_metrics:
-        win_rate = (
-            f"{metrics.win_rate:.1%}" if metrics.win_rate is not None else "N/A"
-        )
-        expectancy = (
-            f"{metrics.expectancy_r:.3f}R"
-            if metrics.expectancy_r is not None
-            else "N/A"
-        )
+        win_rate = f"{metrics.win_rate:.1%}" if metrics.win_rate is not None else "N/A"
+        expectancy = f"{metrics.expectancy_r:.3f}R" if metrics.expectancy_r is not None else "N/A"
         print(
             f"  {metrics.horizon_bars}日: n={metrics.sample_count} "
             f"胜率={win_rate} 期望={expectancy} "
             f"证据={metrics.evidence_status.value}"
         )
-    print(
-        "  研究限制: 双价格/公司行动尚未接入，涨跌停规则尚未按历史日期版本化；"
-        "当前结果不能解释为正式历史成交收益。"
-    )
+    print("  研究限制: 双价格/公司行动尚未接入，涨跌停规则尚未按历史日期版本化；当前结果不能解释为正式历史成交收益。")
 
 
 def _cmd_replay_pair(args: Any) -> None:
@@ -816,24 +761,16 @@ def _cmd_replay_pair(args: Any) -> None:
         history_bars=args.warmup_bars,
     )
 
-    calendar_bundle = load_exchange_calendar(
-        args.calendar_file, expected_exchange=args.exchange
-    )
-    period_dates = tuple(
-        item for item in calendar_bundle.dates if start_date <= item <= end_date
-    )
+    calendar_bundle = load_exchange_calendar(args.calendar_file, expected_exchange=args.exchange)
+    period_dates = tuple(item for item in calendar_bundle.dates if start_date <= item <= end_date)
     if not period_dates:
         raise ValueError("交易日历在回放区间内没有开放交易日")
-    following_date = next(
-        (item for item in calendar_bundle.dates if item > end_date), ""
-    )
+    following_date = next((item for item in calendar_bundle.dates if item > end_date), "")
     if not following_date:
         raise ValueError("交易日历必须显式包含 --end 之后的下一交易日")
 
     market_bundle = load_market_snapshots(args.market_file)
-    position, position_provenance = _load_position(
-        args.position_file, ts_code=args.ts_code
-    )
+    position, position_provenance = _load_position(args.position_file, ts_code=args.ts_code)
     datasource = _resolve_datasource(args.data_source)
     requested_bars = args.warmup_bars + len(period_dates)
     rows = datasource.get_kline_dicts(
@@ -843,22 +780,13 @@ def _cmd_replay_pair(args: Any) -> None:
     )
     all_bars = _rows_to_daily_bars(rows or (), expected_ts_code=args.ts_code)
     validate_bars_as_of(all_bars, end_date)
-    warmup_bars = tuple(bar for bar in all_bars if bar.trade_date < start_date)[
-        -args.warmup_bars :
-    ]
-    replay_bars = tuple(
-        bar for bar in all_bars if start_date <= bar.trade_date <= end_date
-    )
+    warmup_bars = tuple(bar for bar in all_bars if bar.trade_date < start_date)[-args.warmup_bars :]
+    replay_bars = tuple(bar for bar in all_bars if start_date <= bar.trade_date <= end_date)
     if not replay_bars:
         raise ValueError("回放区间内没有个股日线数据")
     if len(warmup_bars) < _MINIMUM_HISTORY_BARS:
-        raise ValueError(
-            "实际预热K线不足 "
-            f"{_MINIMUM_HISTORY_BARS} 根（仅 {len(warmup_bars)} 根），拒绝回放"
-        )
-    missing_market_dates = sorted(
-        {bar.trade_date for bar in replay_bars} - set(market_bundle.snapshots)
-    )
+        raise ValueError(f"实际预热K线不足 {_MINIMUM_HISTORY_BARS} 根（仅 {len(warmup_bars)} 根），拒绝回放")
+    missing_market_dates = sorted({bar.trade_date for bar in replay_bars} - set(market_bundle.snapshots))
     if missing_market_dates:
         raise ValueError(f"市场快照缺少回放评分日: {missing_market_dates}")
 

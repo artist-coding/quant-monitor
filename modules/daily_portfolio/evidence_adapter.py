@@ -78,9 +78,7 @@ def _entry_structure_score(
     if _variant_matched(features, "sb1.reclaim_confirmation"):
         variant_scores["sb1.reclaim_confirmation"] = 95.0
     score = max(variant_scores.values(), default=0.0)
-    winners = tuple(
-        name for name, value in variant_scores.items() if value == score and score > 0
-    )
+    winners = tuple(name for name, value in variant_scores.items() if value == score and score > 0)
     return score, variant_scores, winners
 
 
@@ -144,9 +142,7 @@ def _volume_score(features: DailyStrategyFeatures) -> float:
             "sb1.reclaim_confirmation",
         )
     )
-    is_b2 = _variant_matched(features, "b2.knowledge_5bar") or _variant_matched(
-        features, "b2.legacy_5_14bar"
-    )
+    is_b2 = _variant_matched(features, "b2.knowledge_5bar") or _variant_matched(features, "b2.legacy_5_14bar")
     if (
         features.boolean_features.get("close_below_prev_close")
         and isinstance(ratio_previous, (int, float))
@@ -238,9 +234,7 @@ def _exit_signal_score(features: DailyStrategyFeatures) -> tuple[float, tuple[st
     return score, tuple(name for name, _ in matched)
 
 
-def _trend_break_score(
-    bars: list[DailyData], trend_diagnostics: dict[str, object]
-) -> float:
+def _trend_break_score(bars: list[DailyData], trend_diagnostics: dict[str, object]) -> float:
     candidates: list[float] = []
     status = trend_diagnostics.get("bull_rope_status")
     if status == "死叉":
@@ -268,9 +262,7 @@ def _trend_break_score(
     return max(candidates, default=0.0)
 
 
-def _distribution_score(
-    bars: list[DailyData], features: DailyStrategyFeatures
-) -> tuple[float, int]:
+def _distribution_score(bars: list[DailyData], features: DailyStrategyFeatures) -> tuple[float, int]:
     result = detect_chuhuo_wushi(bars)
     total = int(result.get("total_score", 0) or 0)
     pattern_score = min(100.0, total / 5 * 100.0)
@@ -309,9 +301,7 @@ def build_score_evidence(
     if market.trade_date != normalize_trade_date(features.signal_date):
         raise ValueError("market snapshot date must equal the signal date")
 
-    entry_structure, entry_variant_scores, entry_winners = _entry_structure_score(
-        features
-    )
+    entry_structure, entry_variant_scores, entry_winners = _entry_structure_score(features)
     trend, trend_diagnostics = _trend_score(confirmed)
     volume = _volume_score(features)
     sandglass = calculate_sandglass_score(confirmed)

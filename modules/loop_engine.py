@@ -579,7 +579,9 @@ class ShaofuLoopEngine:
                 signal = self._check_entry_internal(klines, day_idx)
                 if signal is not None:
                     entry_price = klines[day_idx].close
-                    stop_loss = _calc_stop_loss_price(klines, day_idx, self.config.stop_loss_method, self.config.stop_loss_pct)
+                    stop_loss = _calc_stop_loss_price(
+                        klines, day_idx, self.config.stop_loss_method, self.config.stop_loss_pct
+                    )
                     current_trade = LoopTrade(
                         ts_code=ts_code,
                         entry_date=klines[day_idx].trade_date,

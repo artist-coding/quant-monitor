@@ -72,9 +72,7 @@ def _provider(
         dates = tuple(bar.trade_date.replace("-", "") for bar in prefix)
         if calls is not None:
             calls.append((dates, market))
-        action, target = actions.get(
-            dates[-1], (TradeAction.HOLD, position.current_position_pct)
-        )
+        action, target = actions.get(dates[-1], (TradeAction.HOLD, position.current_position_pct))
         return _score(dates[-1], position, action, target)
 
     return provide
@@ -120,9 +118,7 @@ def test_buy_signal_only_fills_at_next_trading_day_open() -> None:
     calls: list[tuple[tuple[str, ...], object]] = []
     result = _replay(
         bars,
-        score_provider=_provider(
-            {"20260710": (TradeAction.OPEN, 0.25)}, calls
-        ),
+        score_provider=_provider({"20260710": (TradeAction.OPEN, 0.25)}, calls),
         market_provider=lambda trade_date: {"trade_date": trade_date},
         execution_config=_execution_config(),
         following_trading_date="20260714",
@@ -143,9 +139,7 @@ def test_open_executes_due_strict_sells_before_due_buys() -> None:
     source_position = _holding()
     sell_score = _score("20260710", source_position, TradeAction.EXIT, 0.0)
     buy_score = _score("20260710", source_position, TradeAction.ADD, 0.20)
-    due_sell = create_sell_order(
-        sell_score, ExecutionMode.NEXT_OPEN_STRICT, "20260713"
-    )
+    due_sell = create_sell_order(sell_score, ExecutionMode.NEXT_OPEN_STRICT, "20260713")
     due_buy = create_buy_order(buy_score, "20260713")
 
     result = _replay(
@@ -303,9 +297,7 @@ def test_risk_sell_order_prevents_a_new_buy_order() -> None:
 
 
 def test_sell_signal_cancels_a_future_buy_order() -> None:
-    future_buy = create_buy_order(
-        _score("20260709", _holding(), TradeAction.ADD, 0.20), "20260714"
-    )
+    future_buy = create_buy_order(_score("20260709", _holding(), TradeAction.ADD, 0.20), "20260714")
     result = _replay(
         [_bar("20260710", close=10.0)],
         score_provider=_provider({"20260710": (TradeAction.EXIT, 0.0)}),
@@ -416,9 +408,7 @@ def test_paired_replay_runs_both_exit_modes_on_the_same_inputs() -> None:
     ]
     paired = replay_exit_mode_pair(
         bars,
-        score_provider_factory=lambda: _provider(
-            {"20260710": (TradeAction.EXIT, 0.0)}
-        ),
+        score_provider_factory=lambda: _provider({"20260710": (TradeAction.EXIT, 0.0)}),
         initial_position=_holding(),
         initial_cash=90_000,
         trading_dates=("20260710", "20260713"),
@@ -490,9 +480,7 @@ def test_t1_blocks_same_day_close_sale_then_unlocks_on_next_trade_date() -> None
         (OrderSide.SELL, "20260714"),
     ]
     assert any(
-        rejection.trade_date == "20260713"
-        and "T+1" in rejection.reason
-        and not rejection.carried_forward
+        rejection.trade_date == "20260713" and "T+1" in rejection.reason and not rejection.carried_forward
         for rejection in result.rejections
     )
     assert result.final_position.shares == 0
@@ -540,9 +528,7 @@ def test_blocked_same_close_hard_exit_latches_until_next_open_fill() -> None:
 
     def tradable(quote, order):
         return not (
-            quote.trade_date == "20260713"
-            and quote.price_type == PriceType.NEXT_OPEN
-            and order.side == OrderSide.SELL
+            quote.trade_date == "20260713" and quote.price_type == PriceType.NEXT_OPEN and order.side == OrderSide.SELL
         )
 
     result = _replay(
@@ -560,8 +546,7 @@ def test_blocked_same_close_hard_exit_latches_until_next_open_fill() -> None:
     original_research = next(
         rejection
         for rejection in first_day.rejections
-        if rejection.order is not None
-        and rejection.order.price_type == PriceType.SAME_CLOSE_RESEARCH
+        if rejection.order is not None and rejection.order.price_type == PriceType.SAME_CLOSE_RESEARCH
     )
     latched = next(
         rejection

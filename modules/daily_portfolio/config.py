@@ -7,7 +7,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Mapping
+from collections.abc import Mapping
 
 from .models import ExecutionMode
 
@@ -40,9 +40,7 @@ class ScoreWeights:
     def __post_init__(self) -> None:
         for name, weights in (("buy", self.buy), ("sell", self.sell)):
             if any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
                 for value in weights.values()
             ):
                 raise ValueError(f"{name} weights must be finite numbers")

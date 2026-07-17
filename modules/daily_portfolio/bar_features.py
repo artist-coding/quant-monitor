@@ -49,9 +49,7 @@ def enrich_daily_bars(
             is_jiayin = bar.close < bar.open and bar.close > previous_close
             is_yinxian = bar.close < previous_close
             is_fangliang_yinxian = (
-                previous_volume > 0
-                and bar.close < previous_close
-                and bar.vol > previous_volume * 1.5
+                previous_volume > 0 and bar.close < previous_close and bar.vol > previous_volume * 1.5
             )
 
         enriched.append(

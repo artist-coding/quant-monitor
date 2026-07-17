@@ -146,7 +146,11 @@ class PositionManager:
         raw_shares = base_shares * vol_adj * regime_mult
         logger.debug(
             "[%s] base=%.0f, vol_adj=%.2f, regime=%.1f, raw=%.0f",
-            ts_code, base_shares, vol_adj, regime_mult, raw_shares,
+            ts_code,
+            base_shares,
+            vol_adj,
+            regime_mult,
+            raw_shares,
         )
 
         # Step 4: 取整到 A 股整手
@@ -200,7 +204,10 @@ class PositionManager:
         # 持仓数量约束
         if len(holdings) >= self.max_positions:
             logger.debug(
-                "[%s] 持仓数(%d)已达上限(%d)", ts_code, len(holdings), self.max_positions,
+                "[%s] 持仓数(%d)已达上限(%d)",
+                ts_code,
+                len(holdings),
+                self.max_positions,
             )
             return False
 
@@ -211,7 +218,7 @@ class PositionManager:
             if isinstance(industry_filter, IndustryFilter):
                 target_industry = industry_filter.get_industry(ts_code)
                 if target_industry:
-                    industry_count = Counter()
+                    industry_count: Counter[str] = Counter()
                     for code in holdings:
                         ind = industry_filter.get_industry(code)
                         if ind:
@@ -219,7 +226,8 @@ class PositionManager:
                     if industry_count[target_industry] >= industry_filter.max_per_industry:
                         logger.debug(
                             "[%s] 同行业(%s)持仓(%d)已达上限(%d)",
-                            ts_code, target_industry,
+                            ts_code,
+                            target_industry,
                             industry_count[target_industry],
                             industry_filter.max_per_industry,
                         )
@@ -258,7 +266,11 @@ class PositionManager:
         )
         logger.info(
             "[%s] 建仓 %d 股 @ %.2f，止损 %.2f，花费 %.0f",
-            ts_code, shares, entry_price, stop_loss_price, cost,
+            ts_code,
+            shares,
+            entry_price,
+            stop_loss_price,
+            cost,
         )
 
     def record_exit(self, ts_code: str, exit_price: float) -> float:
@@ -282,7 +294,10 @@ class PositionManager:
         del self.positions[ts_code]
         logger.info(
             "[%s] 平仓 %d 股 @ %.2f，盈亏 %.0f (%.1f%%)",
-            ts_code, pos.shares, exit_price, pnl,
+            ts_code,
+            pos.shares,
+            exit_price,
+            pnl,
             (exit_price / pos.entry_price - 1) * 100,
         )
         return pnl

@@ -165,9 +165,7 @@ def test_accumulation_confirmation_requires_pullback_and_restart_data() -> None:
     dea = [0.0] * len(dif)
     hist = [0.02] * 20 + [0.05, 0.1, 0.15, 0.2, 0.25, 0.1, -0.08, -0.06, -0.04, 0.04]
 
-    before = evaluate_macd_strategy(
-        bars[:27], config=_config(), macd_values=(dif[:27], dea[:27], hist[:27])
-    )
+    before = evaluate_macd_strategy(bars[:27], config=_config(), macd_values=(dif[:27], dea[:27], hist[:27]))
     confirmed = evaluate_macd_strategy(bars, config=_config(), macd_values=(dif, dea, hist))
 
     assert before["impulse"]["state"] != "ACCUMULATION_CONFIRMED"

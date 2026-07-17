@@ -19,7 +19,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, TypedDict
+
+
+class _TradeWithSignals(TypedDict):
+    entry_date: str
+    exit_date: str
+    pnl_pct: float
+    signals: list[str]
+    holding_days: int
 
 
 class EnsembleMethod(Enum):
@@ -244,7 +252,7 @@ class MultiStrategyBacktestResult:
     ensemble_config: EnsembleConfig
 
     # 交易列表
-    trades: list[dict] = field(default_factory=list)
+    trades: list[_TradeWithSignals] = field(default_factory=list)
 
     # 基础指标
     total_trades: int = 0
@@ -296,7 +304,7 @@ def backtest_with_ensemble(
     # 2. 提取交易信号
     # TODO: 这里需要修改 LoopEngine，让它记录每个交易触发了哪些策略信号
     # 目前简化处理：假设所有交易都是 B1 信号
-    trades_with_signals = [
+    trades_with_signals: list[_TradeWithSignals] = [
         {
             "entry_date": t.entry_date,
             "exit_date": t.exit_date,
@@ -308,7 +316,7 @@ def backtest_with_ensemble(
     ]
 
     # 3. 根据集成配置过滤交易
-    filtered_trades = []
+    filtered_trades: list[_TradeWithSignals] = []
     for trade in trades_with_signals:
         # 创建集成信号
         signals = [

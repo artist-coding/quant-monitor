@@ -6,7 +6,8 @@ import hashlib
 import json
 import math
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from .exceptions import OverlayValidationError
 
@@ -32,13 +33,8 @@ def _to_json_value(value: Any, *, path: str = "$") -> Any:
             result[key] = _to_json_value(item, path=f"{path}.{key}")
         return result
     if isinstance(value, (list, tuple)):
-        return [
-            _to_json_value(item, path=f"{path}[{index}]")
-            for index, item in enumerate(value)
-        ]
-    raise OverlayValidationError(
-        f"{path} contains unsupported JSON value {type(value).__name__}"
-    )
+        return [_to_json_value(item, path=f"{path}[{index}]") for index, item in enumerate(value)]
+    raise OverlayValidationError(f"{path} contains unsupported JSON value {type(value).__name__}")
 
 
 def canonical_json(value: Any) -> str:

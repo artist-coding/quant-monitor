@@ -69,9 +69,7 @@ def _criteria_macd_eligible(klines, score: "StockScore") -> bool:
     if decision["warning_codes"]:
         score.warnings.append(f"MACD:{','.join(decision['warning_codes'])}")
     if decision["trend_eligible_long"] and not result["divergence"]["strong_top"]:
-        score.reasons.append(
-            f"MACD趋势资格:{result['regime']['phase']}，确认={decision['confirm_codes']}"
-        )
+        score.reasons.append(f"MACD趋势资格:{result['regime']['phase']}，确认={decision['confirm_codes']}")
         return True
     return False
 

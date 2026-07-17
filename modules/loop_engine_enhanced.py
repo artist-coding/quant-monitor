@@ -41,13 +41,15 @@ class EnhancedLoopConfig(LoopConfig):
 
     # 投票机制
     min_signals: int = 2  # 最少需要几个策略同意才入场
-    signal_weights: dict[str, float] = field(default_factory=lambda: {
-        "B1": 1.0,
-        "B2": 1.2,  # B2 是确认信号，权重更高
-        "长安": 1.5,  # 长安战法胜率高，权重最高
-        "娜娜": 1.3,
-        "平行重炮": 1.1,
-    })
+    signal_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "B1": 1.0,
+            "B2": 1.2,  # B2 是确认信号，权重更高
+            "长安": 1.5,  # 长安战法胜率高，权重最高
+            "娜娜": 1.3,
+            "平行重炮": 1.1,
+        }
+    )
 
     # 信号强度阈值
     min_signal_strength: float = 1.5  # 总信号强度阈值
@@ -126,10 +128,7 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
             return None
 
         # 计算信号总强度
-        total_strength = sum(
-            self.enhanced_config.signal_weights.get(s, 1.0)
-            for s in triggered_strategies
-        )
+        total_strength = sum(self.enhanced_config.signal_weights.get(s, 1.0) for s in triggered_strategies)
 
         if total_strength < self.enhanced_config.min_signal_strength:
             return None
@@ -141,9 +140,6 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
             return None
 
         today = klines[-1]
-        yesterday = klines[-2]
-        vol_shrink = today.vol < yesterday.vol * self.enhanced_config.vol_shrink_threshold
-
         # 4. 构建返回结果
         reason_parts = [
             f"策略共振: {', '.join(triggered_strategies)}",
@@ -208,7 +204,7 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
         # 条件 3: 近 5-15 日出现过 B1
         has_b1_recent = False
         for i in range(max(0, len(klines) - 15), len(klines) - 1):
-            sub = klines[:i + 1]
+            sub = klines[: i + 1]
             b1 = detect_b1_today(sub)
             if b1.get("is_b1"):
                 has_b1_recent = True
@@ -231,12 +227,12 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
         if len(klines) < 5:
             return None
 
-        day1 = klines[-3]
         day2 = klines[-2]
         day3 = klines[-1]
 
         # Day 1: J < -13
         from .indicators import calculate_kdj
+
         kdj = calculate_kdj(klines[:-2])
         j_val = kdj[2] if isinstance(kdj, tuple) else kdj.j
         if j_val >= -13:
@@ -278,10 +274,9 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
         if len(klines) < 10:
             return None
 
-        today = klines[-1]
-
         # 条件 1: J < 0
         from .indicators import calculate_kdj
+
         kdj = calculate_kdj(klines)
         j_val = kdj[2] if isinstance(kdj, tuple) else kdj.j
         if j_val >= 0:
@@ -326,6 +321,7 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
 
         # 条件 1: J < 55
         from .indicators import calculate_kdj
+
         kdj = calculate_kdj(klines)
         j_val = kdj[2] if isinstance(kdj, tuple) else kdj.j
         if j_val >= 55:
@@ -340,8 +336,6 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
         day2 = klines[-4]
         day3 = klines[-3]
         day4 = klines[-2]
-        day5 = klines[-1]
-
         # 检查 阳-阴-阴-阳 形态
         is_yang1 = day1.close > day1.open
         is_yin2 = day2.close < day2.open
@@ -374,7 +368,7 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
         重写父类方法，使用增强版入场检查
         """
         trades: list[LoopTrade] = []
-        current_trade: LoopTrade | None = None
+        current_trade: EnhancedLoopTrade | None = None
         state = LoopState.TIMING
 
         for i in range(30, len(klines)):
@@ -392,7 +386,7 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
                 signal = self.check_entry(sub)
                 if signal:
                     # 入场
-                    current_trade = LoopTrade(
+                    current_trade = EnhancedLoopTrade(
                         ts_code=ts_code,
                         entry_date=klines[i].trade_date,
                         entry_price=signal["entry_price"],
@@ -401,9 +395,8 @@ class EnhancedShaofuLoopEngine(ShaofuLoopEngine):
                     )
 
                     # 记录触发的策略
-                    if hasattr(current_trade, "triggered_strategies"):
-                        current_trade.triggered_strategies = signal.get("triggered_strategies", [])
-                        current_trade.signal_strength = signal.get("signal_strength", 0.0)
+                    current_trade.triggered_strategies = signal.get("triggered_strategies", [])
+                    current_trade.signal_strength = signal.get("signal_strength", 0.0)
 
                     state = LoopState.HOLDING
 

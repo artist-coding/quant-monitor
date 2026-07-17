@@ -20,9 +20,7 @@ def create_buy_order(score: DailyStockScore, next_trading_date: str) -> PendingO
         raise ValueError("buy order requires OPEN or ADD action")
     if score.vetoes or score.hard_exit_reasons:
         raise ValueError("buy order cannot override hard veto or hard exit reasons")
-    execution_date = require_later_trade_date(
-        next_trading_date, score.signal_date, label="next_trading_date"
-    )
+    execution_date = require_later_trade_date(next_trading_date, score.signal_date, label="next_trading_date")
 
     return PendingOrder(
         ts_code=score.ts_code,
@@ -56,9 +54,7 @@ def create_sell_order(
     else:
         if not next_trading_date:
             raise ValueError("strict exit requires a next trading date")
-        execution_date = require_later_trade_date(
-            next_trading_date, score.signal_date, label="next_trading_date"
-        )
+        execution_date = require_later_trade_date(next_trading_date, score.signal_date, label="next_trading_date")
         price_type = PriceType.NEXT_OPEN
         lookahead = False
 

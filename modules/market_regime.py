@@ -27,6 +27,7 @@ from modules.indicators.price_patterns.base import calculate_dg_yellow, calculat
 
 class MarketRegime(Enum):
     """市场状态枚举"""
+
     BULL = "BULL"
     BEAR = "BEAR"
     SIDEWAYS = "SIDEWAYS"
@@ -34,11 +35,11 @@ class MarketRegime(Enum):
 
 # 默认五因子权重
 _DEFAULT_WEIGHTS = {
-    "ma_alignment": 0.30,    # 均线排列
-    "trend_slope": 0.20,     # 趋势斜率
-    "white_yellow": 0.20,    # 白线/黄线关系
-    "volatility": 0.15,      # 波动率信号
-    "volume_trend": 0.15,    # 量能趋势
+    "ma_alignment": 0.30,  # 均线排列
+    "trend_slope": 0.20,  # 趋势斜率
+    "white_yellow": 0.20,  # 白线/黄线关系
+    "volatility": 0.15,  # 波动率信号
+    "volume_trend": 0.15,  # 量能趋势
 }
 
 
@@ -99,9 +100,7 @@ class MarketRegimeClassifier:
         else:
             return MarketRegime.SIDEWAYS
 
-    def precompute_all(
-        self, klines: list[DailyData], start_idx: int = 120
-    ) -> dict[int, MarketRegime]:
+    def precompute_all(self, klines: list[DailyData], start_idx: int = 120) -> dict[int, MarketRegime]:
         """
         预计算所有日期的市场状态（用于历史回测）
 
@@ -354,6 +353,7 @@ if __name__ == "__main__":
     ) -> list[DailyData]:
         """生成模拟K线数据"""
         import random
+
         random.seed(42)
         klines = []
         price = base_price
@@ -367,18 +367,20 @@ if __name__ == "__main__":
             vol = base_vol * (1 + random.gauss(0, 0.2))
             pct_chg = (close - price) / price * 100 if price > 0 else 0
 
-            klines.append(DailyData(
-                ts_code="000001.SH",
-                trade_date=(base_date + timedelta(days=i)).strftime("%Y%m%d"),
-                open=round(open_p, 2),
-                high=round(high, 2),
-                low=round(low, 2),
-                close=round(close, 2),
-                vol=round(max(vol, 1e6), 0),
-                amount=round(max(vol * close, 1e8), 0),
-                pct_chg=round(pct_chg, 2),
-                prev_close=round(price, 2),
-            ))
+            klines.append(
+                DailyData(
+                    ts_code="000001.SH",
+                    trade_date=(base_date + timedelta(days=i)).strftime("%Y%m%d"),
+                    open=round(open_p, 2),
+                    high=round(high, 2),
+                    low=round(low, 2),
+                    close=round(close, 2),
+                    vol=round(max(vol, 1e6), 0),
+                    amount=round(max(vol * close, 1e8), 0),
+                    pct_chg=round(pct_chg, 2),
+                    prev_close=round(price, 2),
+                )
+            )
             price = close
         return klines
 
@@ -424,13 +426,13 @@ if __name__ == "__main__":
     # 场景4: 历史回测（precompute_all）
     print("\n【历史回测】200日K线，从第120日开始分类")
     regime_history = classifier.precompute_all(bull_klines, start_idx=120)
-    regime_counts = {}
+    regime_counts: dict[str, int] = {}
     for regime in regime_history.values():
         regime_counts[regime.value] = regime_counts.get(regime.value, 0) + 1
     print(f"  牛市场景统计: {regime_counts}")
 
     regime_history_bear = classifier.precompute_all(bear_klines, start_idx=120)
-    regime_counts_bear = {}
+    regime_counts_bear: dict[str, int] = {}
     for regime in regime_history_bear.values():
         regime_counts_bear[regime.value] = regime_counts_bear.get(regime.value, 0) + 1
     print(f"  熊市场景统计: {regime_counts_bear}")

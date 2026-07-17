@@ -568,7 +568,7 @@ def backtest_shaofu_portfolio_integrated(
     # ── 6. 按日驱动主循环 ────────────────────────────────
     for day_idx in range(start_idx, min_kline_len):
         # ── 6a. 市场状态分类 ─────────────────────────────
-        if has_regime and day_idx < len(index_klines):
+        if regime_classifier is not None and has_regime and day_idx < len(index_klines):
             regime = regime_classifier.classify_date(index_klines, day_idx)
             current_config = dynamic_config.get_config(regime)
             regime_str = regime.value
@@ -737,7 +737,7 @@ def backtest_shaofu_portfolio_integrated(
                 current_equity=current_equity,
                 regime=(
                     regime_classifier.classify_date(index_klines, day_idx)
-                    if has_regime and day_idx < len(index_klines)
+                    if regime_classifier is not None and has_regime and day_idx < len(index_klines)
                     else MarketRegime.SIDEWAYS
                 ),
             )

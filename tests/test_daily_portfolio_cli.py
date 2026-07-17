@@ -64,9 +64,7 @@ def _rows(count: int = 130) -> list[dict]:
         result.append(
             {
                 "ts_code": TS_CODE,
-                "trade_date": (date(2025, 1, 1) + timedelta(days=index)).strftime(
-                    "%Y%m%d"
-                ),
+                "trade_date": (date(2025, 1, 1) + timedelta(days=index)).strftime("%Y%m%d"),
                 "open": previous,
                 "high": max(previous, close) * 1.01,
                 "low": min(previous, close) * 0.99,
@@ -91,9 +89,7 @@ def _buy_backtest_rows(count: int = 170, signal_index: int = 129) -> list[dict]:
         result.append(
             {
                 "ts_code": TS_CODE,
-                "trade_date": (
-                    date(2025, 1, 1) + timedelta(days=index)
-                ).strftime("%Y%m%d"),
+                "trade_date": (date(2025, 1, 1) + timedelta(days=index)).strftime("%Y%m%d"),
                 "open": previous,
                 "high": max(previous, close) * 1.005,
                 "low": min(previous, close) * 0.995,
@@ -115,8 +111,7 @@ def _write_market_file(path: Path, dates: list[str]) -> Path:
                 "version": "market-test-v1",
                 "source": "TEST_EXPLICIT_MARKET",
                 "snapshots": [
-                    {"trade_date": trade_date, "score": 55 + index}
-                    for index, trade_date in enumerate(dates)
+                    {"trade_date": trade_date, "score": 55 + index} for index, trade_date in enumerate(dates)
                 ],
             },
             ensure_ascii=False,
@@ -126,9 +121,7 @@ def _write_market_file(path: Path, dates: list[str]) -> Path:
     return path
 
 
-def _write_calendar_file(
-    path: Path, dates: list[str], *, exchange: str = "SZSE"
-) -> Path:
+def _write_calendar_file(path: Path, dates: list[str], *, exchange: str = "SZSE") -> Path:
     path.write_text(
         json.dumps(
             {
@@ -211,9 +204,7 @@ def test_parser_registers_isolated_daily_portfolio_commands(tmp_path: Path) -> N
 def test_parser_requires_explicit_market_and_calendar_files() -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
-        parser.parse_args(
-            ["daily-portfolio", "score", TS_CODE, "--as-of", "20260105"]
-        )
+        parser.parse_args(["daily-portfolio", "score", TS_CODE, "--as-of", "20260105"])
     with pytest.raises(SystemExit):
         parser.parse_args(
             [
@@ -233,12 +224,8 @@ def test_parser_requires_explicit_market_and_calendar_files() -> None:
 
 
 def test_explicit_evidence_files_reject_duplicate_dates(tmp_path: Path) -> None:
-    market_file = _write_market_file(
-        tmp_path / "market.json", ["20260105", "20260105"]
-    )
-    calendar_file = _write_calendar_file(
-        tmp_path / "calendar.json", ["20260105", "20260105"]
-    )
+    market_file = _write_market_file(tmp_path / "market.json", ["20260105", "20260105"])
+    calendar_file = _write_calendar_file(tmp_path / "calendar.json", ["20260105", "20260105"])
     with pytest.raises(ValueError, match="重复日期"):
         load_market_snapshots(str(market_file))
     with pytest.raises(ValueError, match="重复日期"):
@@ -254,9 +241,7 @@ def test_explicit_evidence_files_reject_duplicate_dates(tmp_path: Path) -> None:
         ("available_shares", 100.0),
     ],
 )
-def test_position_file_rejects_non_integer_share_counts(
-    tmp_path: Path, field: str, bad_value: object
-) -> None:
+def test_position_file_rejects_non_integer_share_counts(tmp_path: Path, field: str, bad_value: object) -> None:
     position = {
         "ts_code": TS_CODE,
         "shares": 100,
@@ -390,9 +375,7 @@ def test_replay_pair_uses_explicit_calendar_and_marks_research_lookahead(
     replay_dates = [row["trade_date"] for row in rows[123:126]]
     following_date = rows[126]["trade_date"]
     market_file = _write_market_file(tmp_path / "market.json", replay_dates)
-    calendar_file = _write_calendar_file(
-        tmp_path / "calendar.json", replay_dates + [following_date]
-    )
+    calendar_file = _write_calendar_file(tmp_path / "calendar.json", replay_dates + [following_date])
     datasource = FakeDataSource(rows)
     monkeypatch.setattr(
         "modules.daily_portfolio.cli_adapter.get_datasource",
@@ -418,15 +401,11 @@ def test_replay_pair_uses_explicit_calendar_and_marks_research_lookahead(
             position_score=0,
             current_position_pct=position.current_position_pct,
             target_position_pct=position.current_position_pct,
-            desired_action=(
-                TradeAction.HOLD if position.shares else TradeAction.WATCH
-            ),
+            desired_action=(TradeAction.HOLD if position.shares else TradeAction.WATCH),
             stop_loss=position.stop_loss,
         )
 
-    monkeypatch.setattr(
-        "modules.daily_portfolio.cli_adapter.score_daily_bar", hold_score
-    )
+    monkeypatch.setattr("modules.daily_portfolio.cli_adapter.score_daily_bar", hold_score)
     args = build_parser().parse_args(
         [
             "daily-portfolio",
@@ -468,9 +447,7 @@ def test_buy_backtest_cli_runs_real_score_to_d_plus_1_open_and_outcomes(
     rows = _buy_backtest_rows()
     signal_date = rows[129]["trade_date"]
     market_file = _write_market_file(tmp_path / "market.json", [signal_date])
-    calendar_file = _write_calendar_file(
-        tmp_path / "calendar.json", [row["trade_date"] for row in rows]
-    )
+    calendar_file = _write_calendar_file(tmp_path / "calendar.json", [row["trade_date"] for row in rows])
     datasource = FakeDataSource(rows)
     monkeypatch.setattr(
         "modules.daily_portfolio.cli_adapter.get_datasource",
@@ -518,22 +495,16 @@ def test_buy_backtest_cli_runs_real_score_to_d_plus_1_open_and_outcomes(
     assert payload["inputs"]["market_context_fingerprint"]
     assert payload["inputs"]["research_config"]["horizons"] == [1, 3, 5, 10, 20]
     assert payload["inputs"]["research_config_fingerprint"]
-    assert payload["inputs"]["confirmation_policy_version"] == (
-        "buy-confirmation-policy-v0.2"
-    )
+    assert payload["inputs"]["confirmation_policy_version"] == ("buy-confirmation-policy-v0.2")
     assert payload["inputs"]["confirmation_policy_fingerprint"]
-    assert payload["inputs"]["feature_versions"] == [
-        "daily-strategy-features-v0.1"
-    ]
+    assert payload["inputs"]["feature_versions"] == ["daily-strategy-features-v0.1"]
 
 
 def test_replay_pair_rejects_calendar_without_following_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     market_file = _write_market_file(tmp_path / "market.json", ["20260105"])
-    calendar_file = _write_calendar_file(
-        tmp_path / "calendar.json", ["20260105"]
-    )
+    calendar_file = _write_calendar_file(tmp_path / "calendar.json", ["20260105"])
     monkeypatch.setattr(
         "modules.daily_portfolio.cli_adapter.get_datasource",
         lambda name: pytest.fail("calendar must fail before loading bars"),
@@ -565,9 +536,7 @@ def test_buy_backtest_horizon_one_still_requires_d_plus_2_for_default_t1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     market_file = _write_market_file(tmp_path / "market.json", ["20260105"])
-    calendar_file = _write_calendar_file(
-        tmp_path / "calendar.json", ["20260105", "20260106"]
-    )
+    calendar_file = _write_calendar_file(tmp_path / "calendar.json", ["20260105", "20260106"])
     monkeypatch.setattr(
         "modules.daily_portfolio.cli_adapter.get_datasource",
         lambda name: pytest.fail("calendar coverage must fail before loading bars"),
@@ -605,15 +574,10 @@ def test_replay_pair_rejects_actual_warmup_shorter_than_120(
     rows = _rows(122)
     replay_dates = [row["trade_date"] for row in rows[119:122]]
     following_date = (
-        date.fromisoformat(
-            f"{replay_dates[-1][:4]}-{replay_dates[-1][4:6]}-{replay_dates[-1][6:]}"
-        )
-        + timedelta(days=1)
+        date.fromisoformat(f"{replay_dates[-1][:4]}-{replay_dates[-1][4:6]}-{replay_dates[-1][6:]}") + timedelta(days=1)
     ).strftime("%Y%m%d")
     market_file = _write_market_file(tmp_path / "market.json", replay_dates)
-    calendar_file = _write_calendar_file(
-        tmp_path / "calendar.json", replay_dates + [following_date]
-    )
+    calendar_file = _write_calendar_file(tmp_path / "calendar.json", replay_dates + [following_date])
     datasource = FakeDataSource(rows)
     monkeypatch.setattr(
         "modules.daily_portfolio.cli_adapter.get_datasource",
@@ -661,8 +625,7 @@ def test_adapter_has_no_legacy_command_or_scanner_dependency() -> None:
     def is_legacy_dependency(module: str) -> bool:
         parts = module.split(".")
         return any(
-            part in {"cli_commands", "simulator", "watchlist", "backtest"}
-            or part.startswith("backtest_")
+            part in {"cli_commands", "simulator", "watchlist", "backtest"} or part.startswith("backtest_")
             for part in parts
         )
 

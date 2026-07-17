@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 from statistics import median
+from typing import TypedDict
 
 from ..indicators import DailyData
 from .buy_points import (
@@ -75,6 +76,18 @@ class SampleEvidenceStatus(str, Enum):
     RESEARCH_CANDIDATE = "RESEARCH_CANDIDATE"
 
 
+class _BuyEventCommon(TypedDict):
+    signal_date: str
+    buy_score: float
+    sell_score: float
+    assessment: BuyPointAssessment
+    policy_selected: bool
+    raw_buy_components: Mapping[str, float]
+    buy_contributions: Mapping[str, float]
+    risk_penalty_points: float
+    matched_variants: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class BuyBacktestConfig:
     horizons: tuple[int, ...] = (1, 3, 5, 10, 20)
@@ -86,8 +99,7 @@ class BuyBacktestConfig:
 
     def __post_init__(self) -> None:
         if not self.horizons or any(
-            isinstance(value, bool) or not isinstance(value, int) or value <= 0
-            for value in self.horizons
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in self.horizons
         ):
             raise ValueError("horizons must contain positive integers")
         if tuple(sorted(set(self.horizons))) != self.horizons:
@@ -294,9 +306,7 @@ def _risk_amount_at_stop(
 ) -> float:
     stop_fill = apply_execution_slippage(stop_loss, OrderSide.SELL, execution_config)
     stop_gross = stop_fill * fill.shares
-    stop_costs = calculate_execution_costs(
-        stop_gross, OrderSide.SELL, execution_config
-    )
+    stop_costs = calculate_execution_costs(stop_gross, OrderSide.SELL, execution_config)
     entry_cash_out = fill.gross_amount + fill.costs.total
     stop_proceeds = stop_gross - stop_costs.total
     return max(0.0, entry_cash_out - stop_proceeds)
@@ -312,9 +322,7 @@ def _forward_outcomes(
     result: list[BuyForwardOutcome] = []
     stop_loss = fill.stop_loss
     risk_amount = (
-        _risk_amount_at_stop(fill, stop_loss, execution_config)
-        if stop_loss is not None and stop_loss > 0
-        else 0.0
+        _risk_amount_at_stop(fill, stop_loss, execution_config) if stop_loss is not None and stop_loss > 0 else 0.0
     )
     entry_cash_out = fill.gross_amount + fill.costs.total
 
@@ -322,11 +330,7 @@ def _forward_outcomes(
         window = bars[entry_index : entry_index + horizon]
         complete = len(window) == horizon
         first_stop = next(
-            (
-                normalize_trade_date(bar.trade_date)
-                for bar in window
-                if stop_loss is not None and bar.low <= stop_loss
-            ),
+            (normalize_trade_date(bar.trade_date) for bar in window if stop_loss is not None and bar.low <= stop_loss),
             "",
         )
         if not window:
@@ -354,13 +358,9 @@ def _forward_outcomes(
         net_return = None
         fixed_horizon_r = None
         if complete:
-            sell_fill = apply_execution_slippage(
-                window[-1].close, OrderSide.SELL, execution_config
-            )
+            sell_fill = apply_execution_slippage(window[-1].close, OrderSide.SELL, execution_config)
             sell_gross = sell_fill * fill.shares
-            sell_costs = calculate_execution_costs(
-                sell_gross, OrderSide.SELL, execution_config
-            )
+            sell_costs = calculate_execution_costs(sell_gross, OrderSide.SELL, execution_config)
             net_pnl = sell_gross - sell_costs.total - entry_cash_out
             net_return = net_pnl / entry_cash_out
             if risk_amount > 0:
@@ -373,11 +373,7 @@ def _forward_outcomes(
                 terminal_date=terminal_date,
                 gross_return=(round(gross_return, 10) if gross_return is not None else None),
                 net_return=(round(net_return, 10) if net_return is not None else None),
-                fixed_horizon_r=(
-                    round(fixed_horizon_r, 10)
-                    if fixed_horizon_r is not None
-                    else None
-                ),
+                fixed_horizon_r=(round(fixed_horizon_r, 10) if fixed_horizon_r is not None else None),
                 max_favorable_return=round(max_favorable, 10),
                 max_adverse_return=round(max_adverse, 10),
                 stop_touched=bool(first_stop),
@@ -395,22 +391,13 @@ def _metrics(
     independent_sample: bool = False,
 ) -> BuyHorizonMetrics:
     all_horizon_outcomes = [
-        outcome
-        for event in events
-        for outcome in event.outcomes
-        if outcome.horizon_bars == horizon
+        outcome for event in events for outcome in event.outcomes if outcome.horizon_bars == horizon
     ]
-    outcomes = [
-        outcome
-        for outcome in all_horizon_outcomes
-        if outcome.complete and outcome.net_return is not None
-    ]
-    returns = [float(outcome.net_return) for outcome in outcomes]
-    r_values = [
-        float(outcome.fixed_horizon_r)
-        for outcome in outcomes
-        if outcome.fixed_horizon_r is not None
-    ]
+    outcomes = [outcome for outcome in all_horizon_outcomes if outcome.complete and outcome.net_return is not None]
+    returns = [float(value) for outcome in outcomes if (value := outcome.net_return) is not None]
+    r_values = [float(outcome.fixed_horizon_r) for outcome in outcomes if outcome.fixed_horizon_r is not None]
+    mfe_values = [value for outcome in outcomes if (value := outcome.max_favorable_return) is not None]
+    mae_values = [value for outcome in outcomes if (value := outcome.max_adverse_return) is not None]
     wins = sum(value > 0 for value in returns)
     losses = sum(value < 0 for value in returns)
     flats = len(returns) - wins - losses
@@ -437,25 +424,11 @@ def _metrics(
         win_rate=(wins / len(returns) if returns else None),
         mean_net_return=(sum(returns) / len(returns) if returns else None),
         median_net_return=(median(returns) if returns else None),
-        mean_mfe=(
-            sum(float(item.max_favorable_return) for item in outcomes) / len(outcomes)
-            if outcomes
-            else None
-        ),
-        mean_mae=(
-            sum(float(item.max_adverse_return) for item in outcomes) / len(outcomes)
-            if outcomes
-            else None
-        ),
-        stop_touch_rate=(
-            sum(item.stop_touched for item in outcomes) / len(outcomes)
-            if outcomes
-            else None
-        ),
+        mean_mfe=(sum(mfe_values) / len(mfe_values) if mfe_values else None),
+        mean_mae=(sum(mae_values) / len(mae_values) if mae_values else None),
+        stop_touch_rate=(sum(1 for item in outcomes if item.stop_touched) / len(outcomes) if outcomes else None),
         expectancy_r=expectancy_r,
-        profit_factor=(
-            gross_profit_r / gross_loss_r if gross_loss_r > 0 else None
-        ),
+        profit_factor=(gross_profit_r / gross_loss_r if gross_loss_r > 0 else None),
         evidence_status=evidence_status,
     )
 
@@ -471,11 +444,7 @@ def summarize_buy_horizon(
 
     if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
         raise ValueError("horizon must be a positive integer")
-    if (
-        isinstance(minimum_sample, bool)
-        or not isinstance(minimum_sample, int)
-        or minimum_sample <= 0
-    ):
+    if isinstance(minimum_sample, bool) or not isinstance(minimum_sample, int) or minimum_sample <= 0:
         raise ValueError("minimum_sample must be a positive integer")
     return _metrics(
         events,
@@ -518,9 +487,7 @@ def backtest_buy_points(
 ) -> BuyBacktestResult:
     """Score each D prefix and label matched setups from the D+1 raw open."""
 
-    ordered_bars, calendar, bars_by_date, ts_code = _normalize_inputs(
-        bars, trading_dates
-    )
+    ordered_bars, calendar, bars_by_date, ts_code = _normalize_inputs(bars, trading_dates)
     start = normalize_trade_date(analysis_start)
     end = normalize_trade_date(analysis_end)
     if start > end:
@@ -528,10 +495,7 @@ def backtest_buy_points(
     config = score_config or DailyPortfolioConfig()
     execution = execution_config or ExecutionConfig()
     research = backtest_config or BuyBacktestConfig()
-    bar_indices = {
-        normalize_trade_date(bar.trade_date): index
-        for index, bar in enumerate(ordered_bars)
-    }
+    bar_indices = {normalize_trade_date(bar.trade_date): index for index, bar in enumerate(ordered_bars)}
     signal_dates = tuple(
         normalize_trade_date(bar.trade_date)
         for bar in ordered_bars
@@ -541,9 +505,7 @@ def backtest_buy_points(
         raise ValueError("analysis range contains no stock bars")
     missing_calendar_dates = sorted(set(signal_dates).difference(calendar))
     if missing_calendar_dates:
-        raise ValueError(
-            f"trading_dates do not contain signal dates: {missing_calendar_dates}"
-        )
+        raise ValueError(f"trading_dates do not contain signal dates: {missing_calendar_dates}")
 
     events: list[BuyBacktestEvent] = []
     used_market_contexts: list[dict[str, object]] = []
@@ -573,21 +535,15 @@ def backtest_buy_points(
         )
         assessment = evaluation.buy_point
         used_feature_versions.add(evaluation.features.feature_version)
-        common = {
+        common: _BuyEventCommon = {
             "signal_date": signal_date,
             "buy_score": evaluation.score.buy_score,
             "sell_score": evaluation.score.sell_score,
             "assessment": assessment,
-            "policy_selected": (
-                evaluation.score.desired_action == TradeAction.OPEN
-            ),
-            "raw_buy_components": (
-                evaluation.adapted_evidence.score_evidence.buy.as_mapping()
-            ),
+            "policy_selected": (evaluation.score.desired_action == TradeAction.OPEN),
+            "raw_buy_components": (evaluation.adapted_evidence.score_evidence.buy.as_mapping()),
             "buy_contributions": dict(evaluation.score.buy_contributions),
-            "risk_penalty_points": (
-                evaluation.adapted_evidence.score_evidence.risk_penalty_points
-            ),
+            "risk_penalty_points": (evaluation.adapted_evidence.score_evidence.risk_penalty_points),
             "matched_variants": assessment.matched_variants,
         }
         if assessment.status == BuyPointStatus.BLOCKED:
@@ -628,20 +584,14 @@ def backtest_buy_points(
             continue
 
         execution_date = _next_session(signal_date, calendar)
-        following_date = (
-            _next_session(execution_date, calendar)
-            if execution_date and execution.t1_enabled
-            else ""
-        )
+        following_date = _next_session(execution_date, calendar) if execution_date and execution.t1_enabled else ""
         if not execution_date or (execution.t1_enabled and not following_date):
             events.append(
                 BuyBacktestEvent(
                     **common,
                     status=BuyEventStatus.NO_NEXT_SESSION,
                     execution_date=execution_date,
-                    execution_reason=(
-                        "calendar lacks D+1 or its T+1 following session"
-                    ),
+                    execution_reason=("calendar lacks D+1 or its T+1 following session"),
                     fill=None,
                     outcomes=(),
                 )
@@ -674,11 +624,7 @@ def backtest_buy_points(
             hard_exit_reasons=(),
         )
         order = create_buy_order(virtual_score, execution_date)
-        previous_close = (
-            execution_bar.prev_close
-            if execution_bar.prev_close > 0
-            else ordered_bars[signal_index].close
-        )
+        previous_close = execution_bar.prev_close if execution_bar.prev_close > 0 else ordered_bars[signal_index].close
         quote = BuyExecutionQuote(
             ts_code=ts_code,
             execution_date=execution_date,
@@ -694,9 +640,7 @@ def backtest_buy_points(
             previous_close=previous_close,
             config=execution,
             is_st=is_st_provider(quote) if is_st_provider else False,
-            tradable_at_execution=(
-                tradability_provider(quote) if tradability_provider else True
-            ),
+            tradable_at_execution=(tradability_provider(quote) if tradability_provider else True),
             next_trading_date=following_date,
         )
         if executed.status not in (ExecutionStatus.FILLED, ExecutionStatus.PARTIAL):
@@ -725,9 +669,7 @@ def backtest_buy_points(
             BuyBacktestEvent(
                 **common,
                 status=(
-                    BuyEventStatus.EXECUTED_SELECTED
-                    if common["policy_selected"]
-                    else BuyEventStatus.EXECUTED_CANDIDATE
+                    BuyEventStatus.EXECUTED_SELECTED if common["policy_selected"] else BuyEventStatus.EXECUTED_CANDIDATE
                 ),
                 execution_date=execution_date,
                 execution_reason=executed.reason,
@@ -737,22 +679,14 @@ def backtest_buy_points(
         )
 
     executed_events = tuple(event for event in events if event.fill is not None)
-    selected_events = tuple(
-        event
-        for event in executed_events
-        if event.status == BuyEventStatus.EXECUTED_SELECTED
-    )
+    selected_events = tuple(event for event in executed_events if event.status == BuyEventStatus.EXECUTED_SELECTED)
     setup_candidate_metrics = tuple(
-        _metrics(executed_events, horizon, research.minimum_research_sample)
-        for horizon in research.horizons
+        _metrics(executed_events, horizon, research.minimum_research_sample) for horizon in research.horizons
     )
     selected_metrics = tuple(
-        _metrics(selected_events, horizon, research.minimum_research_sample)
-        for horizon in research.horizons
+        _metrics(selected_events, horizon, research.minimum_research_sample) for horizon in research.horizons
     )
-    independent = _non_overlapping_events(
-        selected_events, bar_indices, research.independent_horizon
-    )
+    independent = _non_overlapping_events(selected_events, bar_indices, research.independent_horizon)
     independent_metrics = _metrics(
         independent,
         research.independent_horizon,
@@ -761,12 +695,8 @@ def backtest_buy_points(
     )
 
     score_buckets: list[BuyScoreBucketMetrics] = []
-    for lower, upper in zip(
-        research.score_bin_edges[:-1], research.score_bin_edges[1:]
-    ):
-        bucket_events = tuple(
-            event for event in executed_events if lower <= event.buy_score < upper
-        )
+    for lower, upper in zip(research.score_bin_edges[:-1], research.score_bin_edges[1:]):
+        bucket_events = tuple(event for event in executed_events if lower <= event.buy_score < upper)
         score_buckets.append(
             BuyScoreBucketMetrics(
                 lower_inclusive=lower,
@@ -782,20 +712,10 @@ def backtest_buy_points(
     variants = sorted({variant for event in events for variant in event.matched_variants})
     variant_metric_items: list[BuyVariantMetrics] = []
     for variant in variants:
-        matched_events = tuple(
-            event for event in events if variant in event.matched_variants
-        )
-        executed_variant_events = tuple(
-            event for event in matched_events if event.fill is not None
-        )
-        primary_events = tuple(
-            event
-            for event in matched_events
-            if event.assessment.primary_variant == variant
-        )
-        primary_executed_events = tuple(
-            event for event in primary_events if event.fill is not None
-        )
+        matched_events = tuple(event for event in events if variant in event.matched_variants)
+        executed_variant_events = tuple(event for event in matched_events if event.fill is not None)
+        primary_events = tuple(event for event in matched_events if event.assessment.primary_variant == variant)
+        primary_executed_events = tuple(event for event in primary_events if event.fill is not None)
         primary_independent = _non_overlapping_events(
             primary_executed_events,
             bar_indices,
@@ -812,12 +732,9 @@ def backtest_buy_points(
                 variant=variant,
                 matched_event_count=len(matched_events),
                 confirmation_qualified_count=sum(
-                    variant in event.assessment.confirming_variants
-                    for event in matched_events
+                    variant in event.assessment.confirming_variants for event in matched_events
                 ),
-                selected_event_count=sum(
-                    event.policy_selected for event in matched_events
-                ),
+                selected_event_count=sum(event.policy_selected for event in matched_events),
                 executed_event_count=len(executed_variant_events),
                 complete_outcome_count=complete_count,
                 primary_event_count=len(primary_events),

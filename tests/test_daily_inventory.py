@@ -170,9 +170,7 @@ def test_price_level_converts_with_execution_day_factor_and_manifest() -> None:
         observed_date="20260709",
         price_manifest_fingerprint=MANIFEST,
     )
-    assert level.to_raw(
-        _frame(), price_manifest_fingerprint=MANIFEST
-    ) == Decimal("90.0")
+    assert level.to_raw(_frame(), price_manifest_fingerprint=MANIFEST) == Decimal("90.0")
     with pytest.raises(InventoryContractError, match="fingerprint"):
         level.to_raw(_frame(), price_manifest_fingerprint="b" * 64)
 

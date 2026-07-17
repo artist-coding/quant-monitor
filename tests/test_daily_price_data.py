@@ -61,16 +61,12 @@ def _frame(
     known_at = (day - timedelta(days=1)).strftime("%Y-%m-%dT18:00:00+08:00")
     resolved_ratio = 1 / signal_scale if ratio is None else ratio
     return DailyPriceFrame(
-        signal_bar=_bar(
-            trade_date, scale=signal_scale, prev_close=raw_prev_close
-        ),
+        signal_bar=_bar(trade_date, scale=signal_scale, prev_close=raw_prev_close),
         execution_bar=_bar(trade_date, prev_close=raw_prev_close),
         signal_basis=basis,
         raw_per_signal_unit=resolved_ratio,
         adjustment_factor_known_at=known_at,
-        adjustment_factor_source_sha256=hashlib.sha256(
-            f"{trade_date}:{resolved_ratio}".encode()
-        ).hexdigest(),
+        adjustment_factor_source_sha256=hashlib.sha256(f"{trade_date}:{resolved_ratio}".encode()).hexdigest(),
     )
 
 
@@ -122,9 +118,7 @@ def test_calibration_ready_series_is_content_addressed_and_stable() -> None:
         (PriceBasis.HFQ_POINT_IN_TIME, False, "not attested"),
     ],
 )
-def test_unsafe_adjustment_provenance_fails_closed(
-    basis: PriceBasis, point_in_time_safe: bool, reason: str
-) -> None:
+def test_unsafe_adjustment_provenance_fails_closed(basis: PriceBasis, point_in_time_safe: bool, reason: str) -> None:
     series = _series(basis=basis, point_in_time_safe=point_in_time_safe)
 
     with pytest.raises(PriceDataContractError, match=reason):
@@ -189,9 +183,7 @@ def test_series_rejects_content_tampering_and_false_empty_ledger() -> None:
         cash_payment_date="20260714",
         share_multiplier=1.1,
         cash_dividend_gross_per_pre_action_share=0.5,
-        withholding_model_version=(
-            DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1
-        ),
+        withholding_model_version=(DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1),
         fractional_share_policy=FractionalSharePolicy.REJECT_NON_INTEGER,
         action_known_at="2026-07-09T18:00:00+08:00",
         source_content_sha256="c" * 64,
@@ -217,9 +209,7 @@ def test_complete_corporate_action_ledger_is_hashed() -> None:
         cash_payment_date="20260714",
         share_multiplier=1.1,
         cash_dividend_gross_per_pre_action_share=0.5,
-        withholding_model_version=(
-            DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1
-        ),
+        withholding_model_version=(DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1),
         fractional_share_policy=FractionalSharePolicy.REJECT_NON_INTEGER,
         action_known_at="2026-07-09T18:00:00+08:00",
         source_content_sha256="c" * 64,
@@ -368,9 +358,7 @@ def test_factor_magnitude_must_match_corporate_action_economics() -> None:
         cash_payment_date="20260714",
         share_multiplier=1,
         cash_dividend_gross_per_pre_action_share=0.01,
-        withholding_model_version=(
-            DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1
-        ),
+        withholding_model_version=(DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1),
         fractional_share_policy=FractionalSharePolicy.REJECT_NON_INTEGER,
         action_known_at="2026-07-09T18:00:00+08:00",
         source_content_sha256="e" * 64,

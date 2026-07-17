@@ -37,8 +37,6 @@ def validate_bars_as_of(bars: Sequence[DailyData], as_of_date: str) -> tuple[Dai
     if dates != sorted(dates):
         raise AsOfContractError("bars must be ordered by trade_date ascending")
     if dates[-1] > cutoff:
-        raise AsOfContractError(
-            f"future bar {dates[-1]} exceeds as_of_date {cutoff}"
-        )
+        raise AsOfContractError(f"future bar {dates[-1]} exceeds as_of_date {cutoff}")
 
     return tuple(bars)

@@ -35,9 +35,7 @@ def _bars(count: int = 150, *, signal_index: int = 129) -> list[DailyData]:
         result.append(
             DailyData(
                 ts_code=TS_CODE,
-                trade_date=(date(2025, 1, 1) + timedelta(days=index)).strftime(
-                    "%Y%m%d"
-                ),
+                trade_date=(date(2025, 1, 1) + timedelta(days=index)).strftime("%Y%m%d"),
                 open=previous,
                 high=max(previous, close) * 1.005,
                 low=min(previous, close) * 0.995,
@@ -93,9 +91,7 @@ def test_real_score_closes_on_d_and_executes_selected_buy_at_d_plus_1_open() -> 
     assert result.setup_candidate_metrics[-1].sample_count == 1
     assert result.selected_metrics[-1].sample_count == 1
     assert result.selected_metrics[-1].evidence_status == SampleEvidenceStatus.INCONCLUSIVE
-    assert "b1.loose_3of4" in {
-        item.variant for item in result.variant_metrics
-    }
+    assert "b1.loose_3of4" in {item.variant for item in result.variant_metrics}
     assert result.bar_data_fingerprint
     assert result.calendar_fingerprint
     assert result.market_context_fingerprint
@@ -224,14 +220,9 @@ def _metric_event(index: int, r_multiple: float) -> BuyBacktestEvent:
 
 
 def test_three_losses_and_two_large_wins_are_positive_expectancy() -> None:
-    events = tuple(
-        _metric_event(index, r_multiple)
-        for index, r_multiple in enumerate((-1, -1, -1, 3, 3))
-    )
+    events = tuple(_metric_event(index, r_multiple) for index, r_multiple in enumerate((-1, -1, -1, 3, 3)))
 
-    metrics = summarize_buy_horizon(
-        events, 10, minimum_sample=5, independent_sample=True
-    )
+    metrics = summarize_buy_horizon(events, 10, minimum_sample=5, independent_sample=True)
 
     assert metrics.sample_count == 5
     assert metrics.win_rate == pytest.approx(0.4)
@@ -241,14 +232,9 @@ def test_three_losses_and_two_large_wins_are_positive_expectancy() -> None:
 
 
 def test_enough_observations_with_non_positive_expectancy_are_not_candidates() -> None:
-    events = tuple(
-        _metric_event(index, r_multiple)
-        for index, r_multiple in enumerate((-1, -1, -1, 1, 1))
-    )
+    events = tuple(_metric_event(index, r_multiple) for index, r_multiple in enumerate((-1, -1, -1, 1, 1)))
 
-    metrics = summarize_buy_horizon(
-        events, 10, minimum_sample=5, independent_sample=True
-    )
+    metrics = summarize_buy_horizon(events, 10, minimum_sample=5, independent_sample=True)
 
     assert metrics.expectancy_r == pytest.approx(-0.2)
     assert metrics.evidence_status == SampleEvidenceStatus.OBSERVED_NON_POSITIVE

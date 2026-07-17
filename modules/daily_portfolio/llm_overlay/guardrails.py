@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..models import TradeAction
 from .exceptions import OverlayValidationError
@@ -109,10 +110,7 @@ def apply_guardrails(
         )
         _append_once(events, event)
 
-    if (
-        snapshot.quant_action in (TradeAction.REDUCE, TradeAction.EXIT)
-        and target_step > snapshot.quant_target_step
-    ):
+    if snapshot.quant_action in (TradeAction.REDUCE, TradeAction.EXIT) and target_step > snapshot.quant_target_step:
         target_step = snapshot.quant_target_step
         _append_once(events, GuardrailEvent.QUANT_SELL_BLOCKED_UPGRADE)
 
@@ -132,9 +130,7 @@ def apply_guardrails(
     if final_action not in snapshot.allowed_actions:
         # A malformed allowed-action set must never be silently expanded by
         # the overlay.  The safe operational response is the exact baseline.
-        return quant_only_fallback(
-            snapshot, FallbackReason.PROPOSAL_VALIDATION_ERROR
-        )
+        return quant_only_fallback(snapshot, FallbackReason.PROPOSAL_VALIDATION_ERROR)
 
     return GuardrailDecision(
         schema_version="guardrail-decision-v1",
@@ -169,6 +165,4 @@ def evaluate_overlay_payload(
         proposal = OverlayProposal.from_dict(payload, snapshot=snapshot)
         return apply_guardrails(snapshot, proposal)
     except (OverlayValidationError, TypeError, ValueError):
-        return quant_only_fallback(
-            snapshot, FallbackReason.PROPOSAL_VALIDATION_ERROR
-        )
+        return quant_only_fallback(snapshot, FallbackReason.PROPOSAL_VALIDATION_ERROR)

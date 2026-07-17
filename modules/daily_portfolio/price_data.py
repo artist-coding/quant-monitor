@@ -18,7 +18,8 @@ from enum import Enum
 import hashlib
 import json
 import math
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from ..indicators import DailyData
 from .dates import normalize_trade_date
@@ -118,19 +119,13 @@ def _known_at(value: Any, *, trade_date: str) -> str:
     try:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise PriceDataContractError(
-            "adjustment_factor_known_at must be an ISO-8601 timestamp"
-        ) from exc
+        raise PriceDataContractError("adjustment_factor_known_at must be an ISO-8601 timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise PriceDataContractError(
-            "adjustment_factor_known_at must include a timezone offset"
-        )
+        raise PriceDataContractError("adjustment_factor_known_at must include a timezone offset")
     day = datetime.strptime(trade_date, "%Y%m%d").date()
     open_time = datetime.combine(day, _MARKET_OPEN, tzinfo=_CHINA_TZ)
     if parsed.astimezone(_CHINA_TZ) > open_time:
-        raise PriceDataContractError(
-            "adjustment factor must be known no later than the session open"
-        )
+        raise PriceDataContractError("adjustment factor must be known no later than the session open")
     return parsed.isoformat()
 
 
@@ -155,9 +150,7 @@ class FrozenDailyBar:
         for field in ("open", "high", "low", "close", "prev_close"):
             object.__setattr__(self, field, _positive(getattr(self, field), field=field))
         for field in ("vol", "amount"):
-            object.__setattr__(
-                self, field, _nonnegative(getattr(self, field), field=field)
-            )
+            object.__setattr__(self, field, _nonnegative(getattr(self, field), field=field))
         object.__setattr__(self, "pct_chg", _finite(self.pct_chg, field="pct_chg"))
         if self.high < max(self.open, self.close):
             raise PriceDataContractError("high must be at least open and close")
@@ -167,7 +160,7 @@ class FrozenDailyBar:
             raise PriceDataContractError("high cannot be below low")
 
     @classmethod
-    def from_daily_data(cls, bar: DailyData | "FrozenDailyBar") -> "FrozenDailyBar":
+    def from_daily_data(cls, bar: DailyData | FrozenDailyBar) -> FrozenDailyBar:
         if isinstance(bar, cls):
             return bar
         if not isinstance(bar, DailyData):
@@ -232,14 +225,10 @@ class CorporateAction:
     source_ref: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "action_id", _nonempty(self.action_id, field="action_id")
-        )
+        object.__setattr__(self, "action_id", _nonempty(self.action_id, field="action_id"))
         object.__setattr__(self, "ts_code", _nonempty(self.ts_code, field="ts_code"))
         if not isinstance(self.action_type, CorporateActionType):
-            raise PriceDataContractError(
-                "action_type must be a supported CorporateActionType"
-            )
+            raise PriceDataContractError("action_type must be a supported CorporateActionType")
         for field in (
             "record_date",
             "ex_date",
@@ -247,17 +236,13 @@ class CorporateAction:
             "share_sellable_date",
             "cash_payment_date",
         ):
-            object.__setattr__(
-                self, field, normalize_trade_date(getattr(self, field))
-            )
+            object.__setattr__(self, field, normalize_trade_date(getattr(self, field)))
         if self.record_date > self.ex_date:
             raise PriceDataContractError("record_date cannot follow ex_date")
         if self.share_credit_date < self.ex_date:
             raise PriceDataContractError("share_credit_date cannot precede ex_date")
         if self.share_sellable_date < self.share_credit_date:
-            raise PriceDataContractError(
-                "share_sellable_date cannot precede share_credit_date"
-            )
+            raise PriceDataContractError("share_sellable_date cannot precede share_credit_date")
         if self.cash_payment_date < self.ex_date:
             raise PriceDataContractError("cash_payment_date cannot precede ex_date")
         object.__setattr__(
@@ -274,13 +259,9 @@ class CorporateAction:
             ),
         )
         if not isinstance(self.withholding_model_version, DividendWithholdingModel):
-            raise PriceDataContractError(
-                "withholding_model_version must be a registered model"
-            )
+            raise PriceDataContractError("withholding_model_version must be a registered model")
         if self.fractional_share_policy != FractionalSharePolicy.REJECT_NON_INTEGER:
-            raise PriceDataContractError(
-                "v1 only supports REJECT_NON_INTEGER fractional-share handling"
-            )
+            raise PriceDataContractError("v1 only supports REJECT_NON_INTEGER fractional-share handling")
         object.__setattr__(
             self,
             "action_known_at",
@@ -291,9 +272,7 @@ class CorporateAction:
             "source_content_sha256",
             _sha256(self.source_content_sha256, field="source_content_sha256"),
         )
-        object.__setattr__(
-            self, "source_ref", _nonempty(self.source_ref, field="source_ref")
-        )
+        object.__setattr__(self, "source_ref", _nonempty(self.source_ref, field="source_ref"))
 
         has_shares = not math.isclose(self.share_multiplier, 1.0, abs_tol=1e-12)
         has_cash = self.cash_dividend_gross_per_pre_action_share > 0
@@ -307,20 +286,11 @@ class CorporateAction:
             (True, True): CorporateActionType.CASH_AND_SHARES,
         }.get((has_shares, has_cash))
         if expected is None or self.action_type != expected:
-            raise PriceDataContractError(
-                "action_type is inconsistent with its share and cash effects"
-            )
-        if has_cash and (
-            self.withholding_model_version
-            != DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1
-        ):
-            raise PriceDataContractError(
-                "cash dividends require the registered A-share withholding model"
-            )
+            raise PriceDataContractError("action_type is inconsistent with its share and cash effects")
+        if has_cash and (self.withholding_model_version != DividendWithholdingModel.CN_A_SHARE_HOLDING_PERIOD_V1):
+            raise PriceDataContractError("cash dividends require the registered A-share withholding model")
         if not has_cash and self.withholding_model_version != DividendWithholdingModel.NONE:
-            raise PriceDataContractError(
-                "a share-only action must use withholding model NONE"
-            )
+            raise PriceDataContractError("a share-only action must use withholding model NONE")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -333,9 +303,7 @@ class CorporateAction:
             "share_sellable_date": self.share_sellable_date,
             "cash_payment_date": self.cash_payment_date,
             "share_multiplier": self.share_multiplier,
-            "cash_dividend_gross_per_pre_action_share": (
-                self.cash_dividend_gross_per_pre_action_share
-            ),
+            "cash_dividend_gross_per_pre_action_share": (self.cash_dividend_gross_per_pre_action_share),
             "withholding_model_version": self.withholding_model_version.value,
             "fractional_share_policy": self.fractional_share_policy.value,
             "action_known_at": self.action_known_at,
@@ -363,17 +331,11 @@ class DailyPriceFrame:
         if not isinstance(self.signal_basis, PriceBasis):
             raise PriceDataContractError("signal_basis must be a PriceBasis")
         if self.signal_basis == PriceBasis.RAW:
-            raise PriceDataContractError(
-                "signal_basis must be adjusted; execution_bar already owns RAW prices"
-            )
+            raise PriceDataContractError("signal_basis must be adjusted; execution_bar already owns RAW prices")
         if signal.trade_date != execution.trade_date:
-            raise PriceDataContractError(
-                "signal and execution bars must have the same trade_date"
-            )
+            raise PriceDataContractError("signal and execution bars must have the same trade_date")
         if signal.ts_code != execution.ts_code:
-            raise PriceDataContractError(
-                "signal and execution bars must have the same non-empty ts_code"
-            )
+            raise PriceDataContractError("signal and execution bars must have the same non-empty ts_code")
         ratio = _positive(self.raw_per_signal_unit, field="raw_per_signal_unit")
         object.__setattr__(self, "raw_per_signal_unit", ratio)
         object.__setattr__(
@@ -396,33 +358,17 @@ class DailyPriceFrame:
             reconstructed = signal_price * ratio
             tolerance = max(0.02, abs(raw_price) * 0.001)
             if abs(reconstructed - raw_price) > tolerance:
-                raise PriceDataContractError(
-                    f"{field} raw/signal ratio is inconsistent within the session"
-                )
+                raise PriceDataContractError(f"{field} raw/signal ratio is inconsistent within the session")
         if not math.isclose(signal.vol, execution.vol, rel_tol=1e-9, abs_tol=1e-9):
-            raise PriceDataContractError(
-                "signal and execution bars must use the same volume units"
-            )
-        if not math.isclose(
-            signal.amount, execution.amount, rel_tol=1e-9, abs_tol=0.01
-        ):
-            raise PriceDataContractError(
-                "signal and execution bars must use the same amount units"
-            )
+            raise PriceDataContractError("signal and execution bars must use the same volume units")
+        if not math.isclose(signal.amount, execution.amount, rel_tol=1e-9, abs_tol=0.01):
+            raise PriceDataContractError("signal and execution bars must use the same amount units")
         expected_pct = (signal.close / signal.prev_close - 1.0) * 100.0
         if not math.isclose(signal.pct_chg, expected_pct, abs_tol=0.1):
-            raise PriceDataContractError(
-                "signal pct_chg must be consistent with adjusted close/prev_close"
-            )
-        expected_execution_pct = (
-            execution.close / execution.prev_close - 1.0
-        ) * 100.0
-        if not math.isclose(
-            execution.pct_chg, expected_execution_pct, abs_tol=0.1
-        ):
-            raise PriceDataContractError(
-                "execution pct_chg must be consistent with raw close/prev_close"
-            )
+            raise PriceDataContractError("signal pct_chg must be consistent with adjusted close/prev_close")
+        expected_execution_pct = (execution.close / execution.prev_close - 1.0) * 100.0
+        if not math.isclose(execution.pct_chg, expected_execution_pct, abs_tol=0.1):
+            raise PriceDataContractError("execution pct_chg must be consistent with raw close/prev_close")
 
     @property
     def ts_code(self) -> str:
@@ -441,11 +387,9 @@ class DailyPriceFrame:
             "signal_basis": self.signal_basis.value,
             "raw_per_signal_unit": self.raw_per_signal_unit,
             "adjustment_factor_known_at": self.adjustment_factor_known_at,
-            "adjustment_factor_source_sha256": (
-                self.adjustment_factor_source_sha256
-            ),
-            "signal_bar": self.signal_bar.as_dict(),
-            "execution_bar": self.execution_bar.as_dict(),
+            "adjustment_factor_source_sha256": (self.adjustment_factor_source_sha256),
+            "signal_bar": FrozenDailyBar.from_daily_data(self.signal_bar).as_dict(),
+            "execution_bar": FrozenDailyBar.from_daily_data(self.execution_bar).as_dict(),
         }
 
 
@@ -470,9 +414,7 @@ class PriceSeriesManifest:
 
     def __post_init__(self) -> None:
         if self.schema_version != "dual-price-manifest-v1":
-            raise PriceDataContractError(
-                "schema_version must be dual-price-manifest-v1"
-            )
+            raise PriceDataContractError("schema_version must be dual-price-manifest-v1")
         object.__setattr__(self, "ts_code", _nonempty(self.ts_code, field="ts_code"))
         start = normalize_trade_date(self.start_date)
         end = normalize_trade_date(self.end_date)
@@ -488,12 +430,8 @@ class PriceSeriesManifest:
             raise PriceDataContractError("execution_basis must be RAW")
         if not isinstance(self.point_in_time_safe, bool):
             raise PriceDataContractError("point_in_time_safe must be boolean")
-        if not isinstance(
-            self.corporate_action_ledger_status, CorporateActionLedgerStatus
-        ):
-            raise PriceDataContractError(
-                "corporate_action_ledger_status must be a ledger status"
-            )
+        if not isinstance(self.corporate_action_ledger_status, CorporateActionLedgerStatus):
+            raise PriceDataContractError("corporate_action_ledger_status must be a ledger status")
         for field in (
             "signal_source",
             "execution_source",
@@ -521,9 +459,7 @@ class PriceSeriesManifest:
         ):
             reasons.append("corporate-action ledger is missing")
         if reasons:
-            raise PriceDataContractError(
-                "price dataset is not calibration-ready: " + "; ".join(reasons)
-            )
+            raise PriceDataContractError("price dataset is not calibration-ready: " + "; ".join(reasons))
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -534,9 +470,7 @@ class PriceSeriesManifest:
             "signal_basis": self.signal_basis.value,
             "execution_basis": self.execution_basis.value,
             "point_in_time_safe": self.point_in_time_safe,
-            "corporate_action_ledger_status": (
-                self.corporate_action_ledger_status.value
-            ),
+            "corporate_action_ledger_status": (self.corporate_action_ledger_status.value),
             "signal_source": self.signal_source,
             "execution_source": self.execution_source,
             "adjustment_source": self.adjustment_source,
@@ -565,54 +499,33 @@ class DualPriceSeries:
             raise PriceDataContractError("frames must contain DailyPriceFrame values")
         dates = tuple(frame.trade_date for frame in frames)
         if len(set(dates)) != len(dates) or dates != tuple(sorted(dates)):
-            raise PriceDataContractError(
-                "dual-price frames must be unique and strictly ascending"
-            )
+            raise PriceDataContractError("dual-price frames must be unique and strictly ascending")
         if any(frame.ts_code != self.manifest.ts_code for frame in frames):
             raise PriceDataContractError("frame stock code differs from manifest")
         if any(frame.signal_basis != self.manifest.signal_basis for frame in frames):
             raise PriceDataContractError("frame signal basis differs from manifest")
         if dates[0] != self.manifest.start_date or dates[-1] != self.manifest.end_date:
-            raise PriceDataContractError(
-                "manifest interval must equal the first and last frame dates"
-            )
+            raise PriceDataContractError("manifest interval must equal the first and last frame dates")
 
         actions = tuple(self.corporate_actions)
         if any(not isinstance(action, CorporateAction) for action in actions):
-            raise PriceDataContractError(
-                "corporate_actions must contain CorporateAction values"
-            )
+            raise PriceDataContractError("corporate_actions must contain CorporateAction values")
         action_ids = tuple(action.action_id for action in actions)
         if len(set(action_ids)) != len(action_ids):
             raise PriceDataContractError("corporate action_id values must be unique")
         if actions != tuple(sorted(actions, key=lambda item: (item.ex_date, item.action_id))):
-            raise PriceDataContractError(
-                "corporate actions must be ordered by ex_date and action_id"
-            )
+            raise PriceDataContractError("corporate actions must be ordered by ex_date and action_id")
         if len({action.ex_date for action in actions}) != len(actions):
-            raise PriceDataContractError(
-                "v1 requires one normalized corporate action per ex_date"
-            )
+            raise PriceDataContractError("v1 requires one normalized corporate action per ex_date")
         if any(action.ts_code != self.manifest.ts_code for action in actions):
-            raise PriceDataContractError(
-                "corporate-action stock code differs from manifest"
-            )
-        if any(
-            not self.manifest.start_date <= action.ex_date <= self.manifest.end_date
-            for action in actions
-        ):
-            raise PriceDataContractError(
-                "corporate action ex_date falls outside the manifest interval"
-            )
+            raise PriceDataContractError("corporate-action stock code differs from manifest")
+        if any(not self.manifest.start_date <= action.ex_date <= self.manifest.end_date for action in actions):
+            raise PriceDataContractError("corporate action ex_date falls outside the manifest interval")
         status = self.manifest.corporate_action_ledger_status
         if status == CorporateActionLedgerStatus.EMPTY_INTERVAL_ATTESTED and actions:
-            raise PriceDataContractError(
-                "an EMPTY_INTERVAL_ATTESTED ledger cannot contain actions"
-            )
+            raise PriceDataContractError("an EMPTY_INTERVAL_ATTESTED ledger cannot contain actions")
         if status == CorporateActionLedgerStatus.COMPLETE and not actions:
-            raise PriceDataContractError(
-                "a COMPLETE ledger must contain actions; use empty attestation"
-            )
+            raise PriceDataContractError("a COMPLETE ledger must contain actions; use empty attestation")
 
         change_dates = {
             frames[index].trade_date
@@ -626,13 +539,9 @@ class DualPriceSeries:
         }
         action_dates = {action.ex_date for action in actions}
         if change_dates != action_dates:
-            raise PriceDataContractError(
-                "adjustment-factor change dates must exactly match corporate-action ex-dates"
-            )
+            raise PriceDataContractError("adjustment-factor change dates must exactly match corporate-action ex-dates")
         if actions and actions[0].ex_date == frames[0].trade_date:
-            raise PriceDataContractError(
-                "a first-frame corporate action lacks a prior raw reference price"
-            )
+            raise PriceDataContractError("a first-frame corporate action lacks a prior raw reference price")
         actions_by_date = {action.ex_date: action for action in actions}
         for index in range(1, len(frames)):
             previous = frames[index - 1]
@@ -641,51 +550,35 @@ class DualPriceSeries:
             expected_reference = previous.execution_bar.close
             if action is not None:
                 expected_reference = (
-                    previous.execution_bar.close
-                    - action.cash_dividend_gross_per_pre_action_share
+                    previous.execution_bar.close - action.cash_dividend_gross_per_pre_action_share
                 ) / action.share_multiplier
                 if expected_reference <= 0:
-                    raise PriceDataContractError(
-                        "corporate action produces a non-positive reference price"
-                    )
+                    raise PriceDataContractError("corporate action produces a non-positive reference price")
             price_tolerance = max(0.02, abs(expected_reference) * 0.002)
             if abs(current.execution_bar.prev_close - expected_reference) > price_tolerance:
-                raise PriceDataContractError(
-                    "raw prev_close is inconsistent with the corporate action"
-                )
+                raise PriceDataContractError("raw prev_close is inconsistent with the corporate action")
             expected_ratio_change = expected_reference / previous.execution_bar.close
-            observed_ratio_change = (
-                current.raw_per_signal_unit / previous.raw_per_signal_unit
-            )
+            observed_ratio_change = current.raw_per_signal_unit / previous.raw_per_signal_unit
             if not math.isclose(
                 observed_ratio_change,
                 expected_ratio_change,
                 rel_tol=0.002,
                 abs_tol=1e-9,
             ):
-                raise PriceDataContractError(
-                    "adjustment-factor magnitude is inconsistent with the corporate action"
-                )
-            signal_tolerance = max(
-                0.02, abs(previous.signal_bar.close) * 0.002
-            )
-            if (
-                abs(current.signal_bar.prev_close - previous.signal_bar.close)
-                > signal_tolerance
-            ):
-                raise PriceDataContractError(
-                    "adjusted prev_close is not continuous across sessions"
-                )
+                raise PriceDataContractError("adjustment-factor magnitude is inconsistent with the corporate action")
+            signal_tolerance = max(0.02, abs(previous.signal_bar.close) * 0.002)
+            if abs(current.signal_bar.prev_close - previous.signal_bar.close) > signal_tolerance:
+                raise PriceDataContractError("adjusted prev_close is not continuous across sessions")
         object.__setattr__(self, "frames", frames)
         object.__setattr__(self, "corporate_actions", actions)
         self._verify_hashes()
 
     def _verify_hashes(self) -> None:
         signal_hash = _sha256_json(
-            [frame.signal_bar.as_dict() for frame in self.frames]
+            [FrozenDailyBar.from_daily_data(frame.signal_bar).as_dict() for frame in self.frames]
         )
         execution_hash = _sha256_json(
-            [frame.execution_bar.as_dict() for frame in self.frames]
+            [FrozenDailyBar.from_daily_data(frame.execution_bar).as_dict() for frame in self.frames]
         )
         adjustment_hash = _sha256_json(
             [
@@ -699,9 +592,7 @@ class DualPriceSeries:
                 for frame in self.frames
             ]
         )
-        action_hash = _sha256_json(
-            [action.as_dict() for action in self.corporate_actions]
-        )
+        action_hash = _sha256_json([action.as_dict() for action in self.corporate_actions])
         expected = {
             "signal_content_sha256": signal_hash,
             "execution_content_sha256": execution_hash,
@@ -714,11 +605,11 @@ class DualPriceSeries:
 
     @property
     def signal_bars(self) -> tuple[DailyData, ...]:
-        return tuple(frame.signal_bar.to_daily_data() for frame in self.frames)
+        return tuple(FrozenDailyBar.from_daily_data(frame.signal_bar).to_daily_data() for frame in self.frames)
 
     @property
     def execution_bars(self) -> tuple[DailyData, ...]:
-        return tuple(frame.execution_bar.to_daily_data() for frame in self.frames)
+        return tuple(FrozenDailyBar.from_daily_data(frame.execution_bar).to_daily_data() for frame in self.frames)
 
     def assert_calibration_ready(self) -> None:
         self.manifest.assert_calibration_ready()
@@ -741,10 +632,10 @@ def build_dual_price_series(
         raise PriceDataContractError("frames cannot be empty")
     resolved_actions = tuple(corporate_actions)
     signal_hash = _sha256_json(
-        [frame.signal_bar.as_dict() for frame in resolved_frames]
+        [FrozenDailyBar.from_daily_data(frame.signal_bar).as_dict() for frame in resolved_frames]
     )
     execution_hash = _sha256_json(
-        [frame.execution_bar.as_dict() for frame in resolved_frames]
+        [FrozenDailyBar.from_daily_data(frame.execution_bar).as_dict() for frame in resolved_frames]
     )
     adjustment_hash = _sha256_json(
         [

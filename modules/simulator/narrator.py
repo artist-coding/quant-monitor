@@ -307,8 +307,7 @@ def _build_user_prompt(result: SimulationResult) -> str:
             for t in recent_sells:
                 try:
                     sections.append(
-                        f"- {t.date} {t.ts_code} {t.action} @ {t.price:.2f} "
-                        f"盈亏 {t.pnl_pct * 100:+.2f}% ({t.reason})"
+                        f"- {t.date} {t.ts_code} {t.action} @ {t.price:.2f} 盈亏 {t.pnl_pct * 100:+.2f}% ({t.reason})"
                     )
                 except Exception:
                     continue

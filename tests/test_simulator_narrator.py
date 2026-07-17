@@ -372,9 +372,7 @@ def test_generate_narrative_filters_think_tags():
     from modules.simulator import narrator
 
     result = _make_simulation_result()
-    fake_text = (
-        "think 第一步推演 think **开盘定性**赚钱。"
-    )
+    fake_text = "think 第一步推演 think **开盘定性**赚钱。"
 
     with patch.object(MiniMaxProvider, "generate", return_value=fake_text):
         with patch.object(MiniMaxProvider, "__init__", return_value=None):
@@ -413,9 +411,7 @@ def test_simulate_narrate_text_helper_in_cli_commands():
         "cached": False,
     }
 
-    with patch(
-        "modules.simulator.narrator.generate_simulation_narrative", return_value=fake_out
-    ) as mock_gen:
+    with patch("modules.simulator.narrator.generate_simulation_narrative", return_value=fake_out) as mock_gen:
         out = _simulate_narrate_text(result=object(), wf_payload=None)
 
     mock_gen.assert_called_once()

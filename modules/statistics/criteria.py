@@ -129,7 +129,7 @@ def validate_strategy(
     sharpe_test_result: Any = None,
     monte_carlo_result: Any = None,
     sub_period_result: Any = None,
-    performance_metrics: dict = None,
+    performance_metrics: dict | None = None,
     level: CriteriaLevel = CriteriaLevel.MODERATE,
 ) -> ValidationReport:
     """
@@ -161,7 +161,9 @@ def validate_strategy(
                     passed=sharpe_test_result.p_value < 0.05,
                     actual_value=f"p={sharpe_test_result.p_value:.4f}",
                     threshold="p<0.05",
-                    message="夏普比率显著大于0" if sharpe_test_result.p_value < 0.05 else "夏普比率不显著，策略可能无效",
+                    message="夏普比率显著大于0"
+                    if sharpe_test_result.p_value < 0.05
+                    else "夏普比率不显著，策略可能无效",
                 )
             )
 

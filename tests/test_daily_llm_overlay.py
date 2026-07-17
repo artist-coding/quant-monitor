@@ -47,9 +47,7 @@ def _snapshot_payload(
     hard_exit_reasons: list[str] | None = None,
     evidence: list[dict] | None = None,
 ) -> dict:
-    resolved_allowed_actions = allowed_actions or list(
-        dict.fromkeys([quant_action, "WATCH", "BLOCK"])
-    )
+    resolved_allowed_actions = allowed_actions or list(dict.fromkeys([quant_action, "WATCH", "BLOCK"]))
     return {
         "schema_version": "quant-evidence-v1",
         "as_of_date": "20260710",
@@ -94,18 +92,10 @@ def _proposal_payload(
 
 def test_canonical_hash_is_stable_for_equivalent_json_key_order() -> None:
     first = EvidenceSnapshot.from_dict(
-        _snapshot_payload(
-            evidence=[
-                _evidence_payload(value={"b": 2, "a": {"y": 2, "x": 1}})
-            ]
-        )
+        _snapshot_payload(evidence=[_evidence_payload(value={"b": 2, "a": {"y": 2, "x": 1}})])
     )
     second = EvidenceSnapshot.from_dict(
-        _snapshot_payload(
-            evidence=[
-                _evidence_payload(value={"a": {"x": 1, "y": 2}, "b": 2})
-            ]
-        )
+        _snapshot_payload(evidence=[_evidence_payload(value={"a": {"x": 1, "y": 2}, "b": 2})])
     )
 
     assert first.canonical_json() == second.canonical_json()
@@ -183,9 +173,7 @@ def test_proposal_rejects_unknown_evidence_reference() -> None:
 def test_proposal_rejects_more_than_one_step_or_non_integer(adjustment) -> None:
     snapshot = EvidenceSnapshot.from_dict(_snapshot_payload())
     with pytest.raises(OverlayValidationError, match="position_step_adjustment"):
-        OverlayProposal.from_dict(
-            _proposal_payload(adjustment=adjustment), snapshot=snapshot
-        )
+        OverlayProposal.from_dict(_proposal_payload(adjustment=adjustment), snapshot=snapshot)
 
 
 @pytest.mark.parametrize("adjustment", [-1, 0, 1])
@@ -199,9 +187,7 @@ def test_hard_exit_truth_table_always_forces_zero(adjustment) -> None:
             hard_exit_reasons=["hard_stop"],
         )
     )
-    proposal = OverlayProposal.from_dict(
-        _proposal_payload(adjustment=adjustment), snapshot=snapshot
-    )
+    proposal = OverlayProposal.from_dict(_proposal_payload(adjustment=adjustment), snapshot=snapshot)
 
     decision = apply_guardrails(snapshot, proposal)
 
@@ -221,9 +207,7 @@ def test_hard_veto_truth_table_blocks_any_increase(adjustment) -> None:
             allowed_actions=["OPEN", "WATCH", "BLOCK"],
         )
     )
-    proposal = OverlayProposal.from_dict(
-        _proposal_payload(adjustment=adjustment), snapshot=snapshot
-    )
+    proposal = OverlayProposal.from_dict(_proposal_payload(adjustment=adjustment), snapshot=snapshot)
 
     decision = apply_guardrails(snapshot, proposal)
 
@@ -243,9 +227,7 @@ def test_hard_veto_on_an_existing_position_resolves_add_to_hold() -> None:
             hard_vetoes=["entry_structure_veto"],
         )
     )
-    proposal = OverlayProposal.from_dict(
-        _proposal_payload(adjustment=1), snapshot=snapshot
-    )
+    proposal = OverlayProposal.from_dict(_proposal_payload(adjustment=1), snapshot=snapshot)
 
     decision = apply_guardrails(snapshot, proposal)
 
@@ -258,9 +240,7 @@ def test_hard_veto_on_an_existing_position_resolves_add_to_hold() -> None:
     ("quant_action", "quant_target_step"),
     [("REDUCE", 2), ("EXIT", 0)],
 )
-def test_quant_sell_truth_table_cannot_be_upgraded(
-    quant_action, quant_target_step
-) -> None:
+def test_quant_sell_truth_table_cannot_be_upgraded(quant_action, quant_target_step) -> None:
     snapshot = EvidenceSnapshot.from_dict(
         _snapshot_payload(
             quant_action=quant_action,
@@ -269,9 +249,7 @@ def test_quant_sell_truth_table_cannot_be_upgraded(
             allowed_actions=["REDUCE", "EXIT", "HOLD"],
         )
     )
-    proposal = OverlayProposal.from_dict(
-        _proposal_payload(adjustment=1), snapshot=snapshot
-    )
+    proposal = OverlayProposal.from_dict(_proposal_payload(adjustment=1), snapshot=snapshot)
 
     decision = apply_guardrails(snapshot, proposal)
 
@@ -282,9 +260,7 @@ def test_quant_sell_truth_table_cannot_be_upgraded(
 
 def test_buy_disposition_can_downgrade_but_not_invent_a_final_action() -> None:
     snapshot = EvidenceSnapshot.from_dict(_snapshot_payload())
-    proposal = OverlayProposal.from_dict(
-        _proposal_payload(disposition="WATCH"), snapshot=snapshot
-    )
+    proposal = OverlayProposal.from_dict(_proposal_payload(disposition="WATCH"), snapshot=snapshot)
 
     decision = apply_guardrails(snapshot, proposal)
 
@@ -303,9 +279,7 @@ def test_human_review_requirement_survives_guardrails_and_serialization() -> Non
             allowed_actions=["WATCH", "OPEN", "BLOCK"],
         )
     )
-    proposal = OverlayProposal.from_dict(
-        _proposal_payload(adjustment=1), snapshot=snapshot
-    )
+    proposal = OverlayProposal.from_dict(_proposal_payload(adjustment=1), snapshot=snapshot)
 
     decision = apply_guardrails(snapshot, proposal)
 
@@ -323,9 +297,7 @@ def test_position_ceiling_clamp_is_recorded() -> None:
             allowed_actions=["HOLD", "ADD"],
         )
     )
-    proposal = OverlayProposal.from_dict(
-        _proposal_payload(adjustment=1), snapshot=snapshot
-    )
+    proposal = OverlayProposal.from_dict(_proposal_payload(adjustment=1), snapshot=snapshot)
 
     decision = apply_guardrails(snapshot, proposal)
 

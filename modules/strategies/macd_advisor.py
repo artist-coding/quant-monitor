@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from ..indicators import DailyData, precompute_macd_sequence
+
+BarLike = DailyData | dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -44,10 +47,28 @@ class MacdUpstreamSignal:
     s1_present: bool = False
 
 
-def _value(bar: DailyData | dict[str, Any], name: str, default: Any = 0.0) -> Any:
+def _value(bar: BarLike, name: str, default: Any = 0.0) -> Any:
     if isinstance(bar, dict):
         return bar.get(name, default)
     return getattr(bar, name, default)
+
+
+def _macd_input_bar(bar: BarLike) -> DailyData:
+    if isinstance(bar, DailyData):
+        return bar
+    close = _number(_value(bar, "close"))
+    return DailyData(
+        ts_code=str(_value(bar, "ts_code", "")),
+        trade_date=str(_value(bar, "trade_date", "")),
+        open=_number(_value(bar, "open", close)),
+        high=_number(_value(bar, "high", close)),
+        low=_number(_value(bar, "low", close)),
+        close=close,
+        vol=_number(_value(bar, "vol")),
+        amount=_number(_value(bar, "amount")),
+        pct_chg=_number(_value(bar, "pct_chg")),
+        prev_close=_number(_value(bar, "prev_close")),
+    )
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -81,7 +102,7 @@ def classify_four_state(dif: float, bar: float, zero_epsilon: float = 0.0) -> tu
 
 
 def detect_synchronization(
-    klines: list[DailyData] | list[dict[str, Any]],
+    klines: Sequence[BarLike],
     dif_values: list[float],
     bar_values: list[float],
     window: int = 5,
@@ -141,7 +162,7 @@ def _confirmed_pivots(values: list[float], left: int, right: int, high: bool) ->
     return pivots
 
 
-def _atr_at(klines: list[DailyData] | list[dict[str, Any]], index: int, period: int = 14) -> float:
+def _atr_at(klines: Sequence[BarLike], index: int, period: int = 14) -> float:
     start = max(0, index - period + 1)
     true_ranges: list[float] = []
     for current in range(start, index + 1):
@@ -160,9 +181,7 @@ def _indicator_peak(values: list[float], index: int, high: bool) -> float:
     return (max if high else min)(window)
 
 
-def _indicator_tolerance(
-    values: list[float], closes: list[float], index: int, multiplier: float
-) -> float:
+def _indicator_tolerance(values: list[float], closes: list[float], index: int, multiplier: float) -> float:
     del closes  # values 已在调用方按收盘价归一化
     window = values[max(0, index - 59) : index + 1]
     return multiplier * statistics.pstdev(window) if len(window) >= 2 else 0.0
@@ -173,7 +192,7 @@ def _divergence_streak(
     prices: list[float],
     indicator: list[float],
     closes: list[float],
-    klines: list[DailyData] | list[dict[str, Any]],
+    klines: Sequence[BarLike],
     config: MacdStrategyConfig,
     high: bool,
 ) -> tuple[bool, int, int | None]:
@@ -189,9 +208,7 @@ def _divergence_streak(
             config.price_tolerance_atr * _atr_at(klines, second),
             closes[second] * config.price_tolerance_pct,
         )
-        indicator_tolerance = _indicator_tolerance(
-            indicator, closes, second, config.dif_tolerance_std
-        )
+        indicator_tolerance = _indicator_tolerance(indicator, closes, second, config.dif_tolerance_std)
         first_indicator = _indicator_peak(indicator, first, high)
         second_indicator = _indicator_peak(indicator, second, high)
         if high:
@@ -211,7 +228,7 @@ def _divergence_streak(
 
 
 def detect_confirmed_divergence(
-    klines: list[DailyData] | list[dict[str, Any]],
+    klines: Sequence[BarLike],
     dif_values: list[float],
     bar_values: list[float],
     config: MacdStrategyConfig | None = None,
@@ -327,12 +344,8 @@ def detect_cross_failure(
     recent_dead = any(gaps[index] < 0 and gaps[index - 1] >= 0 for index in range(recent_start, current))
     green_expanding = current >= 1 and bars[current] < bars[current - 1] < 0
     red_expanding = current >= 1 and bars[current] > bars[current - 1] > 0
-    gold_b = recent_gold and gaps[current] < 0 and (
-        dif_values[current] < dif_values[current - 1] or green_expanding
-    )
-    dead_b = recent_dead and gaps[current] > 0 and (
-        dif_values[current] > dif_values[current - 1] or red_expanding
-    )
+    gold_b = recent_gold and gaps[current] < 0 and (dif_values[current] < dif_values[current - 1] or green_expanding)
+    dead_b = recent_dead and gaps[current] > 0 and (dif_values[current] > dif_values[current - 1] or red_expanding)
     gold_failure = gold_a or gold_b
     dead_failure = dead_a or dead_b
 
@@ -352,7 +365,7 @@ def _mean(values: list[float]) -> float:
 
 
 def _classify_impulse(
-    klines: list[DailyData] | list[dict[str, Any]],
+    klines: Sequence[BarLike],
     dif_values: list[float],
     bar_values: list[float],
     momentum: dict[str, Any],
@@ -372,8 +385,7 @@ def _classify_impulse(
     total_positive = sum(recent_returns)
     concentration = max(recent_returns, default=0.0) / total_positive if total_positive > 0 else 1.0
     sync_days = sum(
-        closes[i] > closes[i - 1] and ndif[i] > ndif[i - 1] and nbar[i] > nbar[i - 1]
-        for i in range(max(1, n - 5), n)
+        closes[i] > closes[i - 1] and ndif[i] > ndif[i - 1] and nbar[i] > nbar[i - 1] for i in range(max(1, n - 5), n)
     )
     candidate_now = (
         momentum["up_sync_components"] == 3
@@ -386,12 +398,11 @@ def _classify_impulse(
     impulse_end: int | None = None
     for end in range(max(4, n - 40), max(4, n - 2)):
         transitions = range(end - 2, end + 1)
-        if all(
-            closes[i] > closes[i - 1]
-            and ndif[i] > ndif[i - 1]
-            and nbar[i] > nbar[i - 1]
-            for i in transitions
-        ) and dif_values[end] > 0 and bar_values[end] > 0:
+        if (
+            all(closes[i] > closes[i - 1] and ndif[i] > ndif[i - 1] and nbar[i] > nbar[i - 1] for i in transitions)
+            and dif_values[end] > 0
+            and bar_values[end] > 0
+        ):
             impulse_end = end
 
     pullback_valid = False
@@ -403,9 +414,7 @@ def _classify_impulse(
         impulse_slice = list(range(max(0, impulse_end - 4), impulse_end + 1))
         pulled_back = bool(pullback_slice) and min(closes[i] for i in pullback_slice) < closes[impulse_end] * 0.995
         dif_held = bool(pullback_slice) and all(dif_values[i] > 0 for i in pullback_slice)
-        pullback_volume_ok = _mean([amounts[i] for i in pullback_slice]) < _mean(
-            [amounts[i] for i in impulse_slice]
-        )
+        pullback_volume_ok = _mean([amounts[i] for i in pullback_slice]) < _mean([amounts[i] for i in impulse_slice])
         support = min(lows[i] for i in impulse_slice)
         support_held = bool(pullback_slice) and min(lows[i] for i in pullback_slice) >= support * 0.98
         pullback_valid = pulled_back and dif_held and pullback_volume_ok and support_held
@@ -483,7 +492,7 @@ def _classify_impulse(
 
 
 def evaluate_macd_strategy(
-    klines: list[DailyData] | list[dict[str, Any]],
+    klines: Sequence[BarLike],
     upstream_signal: MacdUpstreamSignal | None = None,
     config: MacdStrategyConfig | None = None,
     macd_values: tuple[list[float], list[float], list[float]] | None = None,
@@ -493,8 +502,12 @@ def evaluate_macd_strategy(
     upstream = upstream_signal or MacdUpstreamSignal()
     n = len(klines)
     if macd_values is None:
+        daily_klines = [_macd_input_bar(item) for item in klines]
         dif_values, dea_values, bar_values = precompute_macd_sequence(
-            klines, config.fast, config.slow, config.signal
+            daily_klines,
+            config.fast,
+            config.slow,
+            config.signal,
         )
     else:
         dif_values, dea_values, bar_values = macd_values
@@ -512,7 +525,11 @@ def evaluate_macd_strategy(
     zero_cross_up = ready and dif > 0 and dif_values[-2] <= 0
     zero_cross_down = ready and dif < 0 and dif_values[-2] >= 0
     momentum = detect_synchronization(klines, dif_values, bar_values, config.sync_window)
-    divergence = detect_confirmed_divergence(klines, dif_values, bar_values, config) if ready else detect_confirmed_divergence([], [], [], config)
+    divergence = (
+        detect_confirmed_divergence(klines, dif_values, bar_values, config)
+        if ready
+        else detect_confirmed_divergence([], [], [], config)
+    )
     closes = [max(_number(_value(item, "close")), 1e-12) for item in klines]
     cross_failure = (
         detect_cross_failure(dif_values, dea_values, closes, bar_values, config)
@@ -545,12 +562,7 @@ def evaluate_macd_strategy(
         or (phase == "BULL_PULLBACK" and green_contracting)
         or (dif > 0 and cross_failure["dead_cross_failure"])
     )
-    entry_ready = (
-        upstream.exists
-        and trend_eligible_long
-        and not hard_veto
-        and not divergence["strong_top"]
-    )
+    entry_ready = upstream.exists and trend_eligible_long and not hard_veto and not divergence["strong_top"]
 
     warning_codes: list[str] = []
     confirm_codes: list[str] = []
@@ -654,7 +666,9 @@ def apply_macd_advisor(signals: list[Any], result: dict[str, Any]) -> list[Any]:
         signal.details = details
         if decision["hard_veto"]:
             signal.action = "WATCH"
-            signal.reason = f"{signal.reason or signal.description}；MACD 顾问否决：{','.join(decision['warning_codes'])}"
+            signal.reason = (
+                f"{signal.reason or signal.description}；MACD 顾问否决：{','.join(decision['warning_codes'])}"
+            )
     return signals
 
 

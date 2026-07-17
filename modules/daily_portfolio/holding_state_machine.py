@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Sequence
+from collections.abc import Sequence
 
 from .dates import normalize_trade_date
 from .models import LifecycleState, OrderSide, PendingOrder, PositionState
@@ -35,9 +35,7 @@ def resolve_lifecycle_after_day(
     if any(order.ts_code != position.ts_code for order in pending_orders):
         raise ValueError("pending orders must match the position stock")
     origin = from_state or position.lifecycle_state
-    has_pending_sell = any(
-        order.side == OrderSide.SELL for order in pending_orders
-    )
+    has_pending_sell = any(order.side == OrderSide.SELL for order in pending_orders)
     has_pending_buy = any(order.side == OrderSide.BUY for order in pending_orders)
 
     if sell_blocked and position.shares > 0:

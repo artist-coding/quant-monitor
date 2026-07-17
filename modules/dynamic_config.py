@@ -33,28 +33,28 @@ from modules.market_regime import MarketRegime
 # 默认参数映射表：各市场状态下的参数覆盖
 DEFAULT_REGIME_PARAMS: dict[str, dict] = {
     "BULL": {
-        "j_threshold": 18,        # 牛市放宽 J 值阈值（允许追高）
-        "stop_loss_pct": -0.07,   # 牛市放宽止损（容忍更大回撤）
-        "bbi_break_days": 3,      # 牛市放宽 BBI 跌破天数（避免假跌破）
-        "min_holding_days": 5,    # 牛市延长持仓（趋势持续性强）
-        "position_pct": 0.30,     # 牛市加大仓位
-        "lu_half": True,          # 牛市启用卤煮减半
+        "j_threshold": 18,  # 牛市放宽 J 值阈值（允许追高）
+        "stop_loss_pct": -0.07,  # 牛市放宽止损（容忍更大回撤）
+        "bbi_break_days": 3,  # 牛市放宽 BBI 跌破天数（避免假跌破）
+        "min_holding_days": 5,  # 牛市延长持仓（趋势持续性强）
+        "position_pct": 0.30,  # 牛市加大仓位
+        "lu_half": True,  # 牛市启用卤煮减半
     },
     "SIDEWAYS": {
-        "j_threshold": 12,        # 震荡市使用默认 J 值
-        "stop_loss_pct": -0.05,   # 震荡市适中止损
-        "bbi_break_days": 2,      # 震荡市使用默认 BBI 跌破天数
-        "min_holding_days": 3,    # 震荡市使用默认持仓天数
-        "position_pct": 0.20,     # 震荡市降低仓位
-        "lu_half": True,          # 震荡市启用卤煮减半
+        "j_threshold": 12,  # 震荡市使用默认 J 值
+        "stop_loss_pct": -0.05,  # 震荡市适中止损
+        "bbi_break_days": 2,  # 震荡市使用默认 BBI 跌破天数
+        "min_holding_days": 3,  # 震荡市使用默认持仓天数
+        "position_pct": 0.20,  # 震荡市降低仓位
+        "lu_half": True,  # 震荡市启用卤煮减半
     },
     "BEAR": {
-        "j_threshold": 5,         # 熊市严格 J 值（只抓超跌反弹）
-        "stop_loss_pct": -0.03,   # 熊市收紧止损（快进快出）
-        "bbi_break_days": 1,      # 熊市敏感 BBI 跌破（立即离场）
-        "min_holding_days": 2,    # 熊市缩短持仓（减少 exposure）
-        "position_pct": 0.15,     # 熊市轻仓试探
-        "lu_half": False,         # 熊市关闭卤煮减半（保守策略）
+        "j_threshold": 5,  # 熊市严格 J 值（只抓超跌反弹）
+        "stop_loss_pct": -0.03,  # 熊市收紧止损（快进快出）
+        "bbi_break_days": 1,  # 熊市敏感 BBI 跌破（立即离场）
+        "min_holding_days": 2,  # 熊市缩短持仓（减少 exposure）
+        "position_pct": 0.15,  # 熊市轻仓试探
+        "lu_half": False,  # 熊市关闭卤煮减半（保守策略）
     },
 }
 
@@ -140,10 +140,7 @@ class DynamicConfigAdapter:
         Returns:
             {状态名称: LoopConfig} 字典，包含 BULL / BEAR / SIDEWAYS 三种状态的完整配置
         """
-        return {
-            regime_key: self.get_config(MarketRegime(regime_key))
-            for regime_key in self._regime_params
-        }
+        return {regime_key: self.get_config(MarketRegime(regime_key)) for regime_key in self._regime_params}
 
     def get_regime_params(self, regime: str) -> dict:
         """
@@ -194,9 +191,11 @@ if __name__ == "__main__":
 
     # 测试3: 自定义 regime_params
     print("\n【测试3】自定义 regime_params 覆盖")
-    adapter3 = DynamicConfigAdapter(regime_params={
-        "BULL": {"j_threshold": 25, "position_pct": 0.5},
-    })
+    adapter3 = DynamicConfigAdapter(
+        regime_params={
+            "BULL": {"j_threshold": 25, "position_pct": 0.5},
+        }
+    )
     bull_config = adapter3.get_config(MarketRegime.BULL)
     print(f"  BULL j_threshold = {bull_config.j_threshold} (自定义为25)")
     print(f"  BULL position_pct = {bull_config.position_pct} (自定义为0.5)")

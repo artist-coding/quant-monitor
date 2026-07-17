@@ -54,11 +54,7 @@ class ExecutionConfig:
     cost_model_version: str = "fixed-current-research-v0.1"
 
     def __post_init__(self) -> None:
-        if (
-            isinstance(self.lot_size, bool)
-            or not isinstance(self.lot_size, int)
-            or self.lot_size <= 0
-        ):
+        if isinstance(self.lot_size, bool) or not isinstance(self.lot_size, int) or self.lot_size <= 0:
             raise ValueError("lot_size must be a positive integer")
         rates = (
             self.buy_slippage_rate,
@@ -70,15 +66,9 @@ class ExecutionConfig:
         )
         if any(not isfinite(value) or value < 0 for value in rates):
             raise ValueError("execution rates and costs must be finite and non-negative")
-        if (
-            not isfinite(self.cash_utilization_limit)
-            or not 0 < self.cash_utilization_limit <= 1
-        ):
+        if not isfinite(self.cash_utilization_limit) or not 0 < self.cash_utilization_limit <= 1:
             raise ValueError("cash_utilization_limit must be in (0, 1]")
-        if (
-            not isfinite(self.risk_per_trade_pct)
-            or not 0 < self.risk_per_trade_pct <= 1
-        ):
+        if not isfinite(self.risk_per_trade_pct) or not 0 < self.risk_per_trade_pct <= 1:
             raise ValueError("risk_per_trade_pct must be in (0, 1]")
         if not isfinite(self.price_tick) or self.price_tick <= 0:
             raise ValueError("price_tick must be finite and positive")
@@ -227,11 +217,7 @@ def _costs(amount: float, side: OrderSide, config: ExecutionConfig) -> Execution
 def _fill_price(raw_price: float, side: OrderSide, config: ExecutionConfig) -> float:
     if raw_price <= 0:
         raise ValueError("execution price must be positive")
-    rate = (
-        config.buy_slippage_rate
-        if side == OrderSide.BUY
-        else -config.sell_slippage_rate
-    )
+    rate = config.buy_slippage_rate if side == OrderSide.BUY else -config.sell_slippage_rate
     adjusted = Decimal(str(raw_price)) * (Decimal("1") + Decimal(str(rate)))
     tick = Decimal(str(config.price_tick))
     ticks = (adjusted / tick).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
@@ -325,35 +311,22 @@ def execute_target_order(
     execution_date = normalize_trade_date(bar.trade_date)
 
     if bar.ts_code != order.ts_code:
-        return _not_executed(
-            ExecutionStatus.NOT_DUE, order, position, cash, "K线股票与订单不匹配"
-        )
+        return _not_executed(ExecutionStatus.NOT_DUE, order, position, cash, "K线股票与订单不匹配")
     if execution_date != order.planned_execution_date:
-        return _not_executed(
-            ExecutionStatus.NOT_DUE, order, position, cash, "尚未到计划执行日"
-        )
+        return _not_executed(ExecutionStatus.NOT_DUE, order, position, cash, "尚未到计划执行日")
     position = unlock_t1(position, execution_date)
     if cash < 0 or equity <= 0:
         raise ValueError("cash cannot be negative and equity must be positive")
     if not tradable_at_execution:
-        return _not_executed(
-            ExecutionStatus.BLOCKED, order, position, cash, "停牌或无有效开收盘报价"
-        )
+        return _not_executed(ExecutionStatus.BLOCKED, order, position, cash, "停牌或无有效开收盘报价")
     if order.side == OrderSide.BUY and is_st and not resolved_config.allow_st:
-        return _not_executed(
-            ExecutionStatus.BLOCKED, order, position, cash, "ST标的禁止新增仓位"
-        )
+        return _not_executed(ExecutionStatus.BLOCKED, order, position, cash, "ST标的禁止新增仓位")
 
     raw_price = bar.open if order.price_type == PriceType.NEXT_OPEN else bar.close
     if raw_price <= 0:
-        return _not_executed(
-            ExecutionStatus.BLOCKED, order, position, cash, "成交价格无效"
-        )
+        return _not_executed(ExecutionStatus.BLOCKED, order, position, cash, "成交价格无效")
     if resolved_config.apply_price_limits:
-        if (
-            resolved_config.require_previous_close_for_limits
-            and (previous_close is None or previous_close <= 0)
-        ):
+        if resolved_config.require_previous_close_for_limits and (previous_close is None or previous_close <= 0):
             return _not_executed(
                 ExecutionStatus.BLOCKED,
                 order,
@@ -369,36 +342,22 @@ def execute_target_order(
             resolved_config.price_tick,
         )
         if limit_reason:
-            return _not_executed(
-                ExecutionStatus.BLOCKED, order, position, cash, limit_reason
-            )
+            return _not_executed(ExecutionStatus.BLOCKED, order, position, cash, limit_reason)
 
     fill_price = _fill_price(raw_price, order.side, resolved_config)
     if resolved_config.apply_price_limits and previous_close is not None:
         limit_rate = _limit_rate(order.ts_code, is_st)
-        upper = _round_price_to_tick(
-            previous_close * (1 + limit_rate), resolved_config.price_tick
-        )
-        lower = _round_price_to_tick(
-            previous_close * (1 - limit_rate), resolved_config.price_tick
-        )
-        fill_price = (
-            min(fill_price, upper)
-            if order.side == OrderSide.BUY
-            else max(fill_price, lower)
-        )
-    desired_shares = _target_shares(
-        order.target_position_pct, equity, fill_price, resolved_config.lot_size
-    )
+        upper = _round_price_to_tick(previous_close * (1 + limit_rate), resolved_config.price_tick)
+        lower = _round_price_to_tick(previous_close * (1 - limit_rate), resolved_config.price_tick)
+        fill_price = min(fill_price, upper) if order.side == OrderSide.BUY else max(fill_price, lower)
+    desired_shares = _target_shares(order.target_position_pct, equity, fill_price, resolved_config.lot_size)
     requested_shares = (
         max(0, desired_shares - position.shares)
         if order.side == OrderSide.BUY
         else max(0, position.shares - desired_shares)
     )
     if requested_shares == 0:
-        return _not_executed(
-            ExecutionStatus.BLOCKED, order, position, cash, "目标仓位无需成交"
-        )
+        return _not_executed(ExecutionStatus.BLOCKED, order, position, cash, "目标仓位无需成交")
 
     allocation_requested_shares = requested_shares
     status = ExecutionStatus.FILLED
@@ -430,12 +389,7 @@ def execute_target_order(
             existing_risk = max(0.0, position.avg_cost - stop_loss) * position.shares
             remaining_risk = max(0.0, risk_budget - existing_risk)
             max_risk_shares = (
-                floor(
-                    remaining_risk
-                    / risk_per_share
-                    / resolved_config.lot_size
-                )
-                * resolved_config.lot_size
+                floor(remaining_risk / risk_per_share / resolved_config.lot_size) * resolved_config.lot_size
             )
             requested_shares = min(requested_shares, max_risk_shares)
             if requested_shares < allocation_requested_shares:
@@ -448,21 +402,15 @@ def execute_target_order(
                     cash,
                     "风险预算不足一手",
                 )
-        shares = _affordable_buy_shares(
-            requested_shares, cash, fill_price, resolved_config
-        )
+        shares = _affordable_buy_shares(requested_shares, cash, fill_price, resolved_config)
         if shares == 0:
-            return _not_executed(
-                ExecutionStatus.BLOCKED, order, position, cash, "可用现金不足一手"
-            )
+            return _not_executed(ExecutionStatus.BLOCKED, order, position, cash, "可用现金不足一手")
         if shares < requested_shares:
             partial_reasons.append("可用现金限制")
     else:
         shares = min(requested_shares, position.available_shares)
         if shares == 0:
-            return _not_executed(
-                ExecutionStatus.BLOCKED, order, position, cash, "T+1或可卖股数不足"
-            )
+            return _not_executed(ExecutionStatus.BLOCKED, order, position, cash, "T+1或可卖股数不足")
         if shares < requested_shares:
             partial_reasons.append("T+1或可卖股数限制")
 
@@ -477,11 +425,7 @@ def execute_target_order(
         new_shares = position.shares + shares
         new_cash = cash - gross_amount - costs.total
         avg_cost = (old_cost_value + gross_amount + costs.total) / new_shares
-        available_shares = (
-            position.available_shares
-            if resolved_config.t1_enabled
-            else new_shares
-        )
+        available_shares = position.available_shares if resolved_config.t1_enabled else new_shares
         can_sell_date = (
             require_later_trade_date(
                 next_trading_date,
@@ -498,9 +442,7 @@ def execute_target_order(
         avg_cost = position.avg_cost if new_shares else 0.0
         available_shares = max(0, position.available_shares - shares)
         can_sell_date = position.can_sell_date if new_shares else ""
-        lifecycle = (
-            LifecycleState.EXITED if new_shares == 0 else LifecycleState.REDUCING
-        )
+        lifecycle = LifecycleState.EXITED if new_shares == 0 else LifecycleState.REDUCING
 
     updated_position = PositionState(
         ts_code=position.ts_code,
@@ -509,11 +451,7 @@ def execute_target_order(
         available_shares=available_shares,
         avg_cost=round(avg_cost, 6),
         current_position_pct=min(1.0, new_shares * fill_price / equity),
-        stop_loss=(
-            None
-            if new_shares == 0
-            else order.score.stop_loss or position.stop_loss
-        ),
+        stop_loss=(None if new_shares == 0 else order.score.stop_loss or position.stop_loss),
         can_sell_date=can_sell_date,
     )
     execution_config_fingerprint = resolved_config.canonical_fingerprint

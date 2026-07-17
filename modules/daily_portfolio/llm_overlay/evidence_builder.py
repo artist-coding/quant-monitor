@@ -12,9 +12,7 @@ from .models import EvidenceItem, EvidenceKind, EvidenceSnapshot
 
 
 def _step_index(value: float, ladder: tuple[float, ...], *, field: str) -> int:
-    matches = [
-        index for index, rung in enumerate(ladder) if abs(rung - value) <= 1e-9
-    ]
+    matches = [index for index, rung in enumerate(ladder) if abs(rung - value) <= 1e-9]
     if len(matches) != 1:
         raise OverlayValidationError(f"{field} is not an exact position-ladder rung")
     return matches[0]
@@ -26,6 +24,7 @@ def _allowed_actions(
     hard_vetoes: tuple[str, ...],
     hard_exit_reasons: tuple[str, ...],
 ) -> tuple[TradeAction, ...]:
+    allowed: tuple[TradeAction, ...]
     if hard_exit_reasons:
         allowed = (TradeAction.EXIT,) if current_step > 0 else (TradeAction.BLOCK,)
     elif hard_vetoes and current_step == 0:

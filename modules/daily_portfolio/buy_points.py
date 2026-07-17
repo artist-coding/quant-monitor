@@ -94,8 +94,7 @@ class BuyPointAssessment:
         ):
             raise ValueError("planned_stop_loss must be finite and positive")
         if self.estimated_risk_pct is not None and (
-            not math.isfinite(self.estimated_risk_pct)
-            or not 0 < self.estimated_risk_pct < 1
+            not math.isfinite(self.estimated_risk_pct) or not 0 < self.estimated_risk_pct < 1
         ):
             raise ValueError("estimated_risk_pct must be in (0, 1)")
         if self.confirmed != (self.status == BuyPointStatus.CONFIRMED):
@@ -105,18 +104,11 @@ class BuyPointAssessment:
         if self.setup_matched != bool(self.matched_variants):
             raise ValueError("setup_matched must agree with matched_variants")
         if self.confirmation_setup_matched != bool(self.confirming_variants):
-            raise ValueError(
-                "confirmation_setup_matched must agree with confirming_variants"
-            )
+            raise ValueError("confirmation_setup_matched must agree with confirming_variants")
         if self.primary_variant and self.primary_variant not in self.matched_variants:
             raise ValueError("primary_variant must be one of matched_variants")
-        if (
-            self.primary_confirming_variant
-            and self.primary_confirming_variant not in self.confirming_variants
-        ):
-            raise ValueError(
-                "primary_confirming_variant must be one of confirming_variants"
-            )
+        if self.primary_confirming_variant and self.primary_confirming_variant not in self.confirming_variants:
+            raise ValueError("primary_confirming_variant must be one of confirming_variants")
         if not set(self.confirming_variants).issubset(self.matched_variants):
             raise ValueError("confirming_variants must be matched research variants")
         if set(self.variant_strengths) != set(self.matched_variants):
@@ -131,8 +123,7 @@ def matched_entry_variants(features: DailyStrategyFeatures) -> tuple[str, ...]:
     return tuple(
         name
         for name in ENTRY_VARIANT_PRIORITY
-        if (evidence := features.variant_evidence.get(name)) is not None
-        and evidence.matched
+        if (evidence := features.variant_evidence.get(name)) is not None and evidence.matched
     )
 
 
@@ -144,8 +135,7 @@ def matched_confirming_entry_variants(
     return tuple(
         name
         for name in CONFIRMING_ENTRY_VARIANT_PRIORITY
-        if (evidence := features.variant_evidence.get(name)) is not None
-        and evidence.matched
+        if (evidence := features.variant_evidence.get(name)) is not None and evidence.matched
     )
 
 
@@ -161,17 +151,10 @@ def assess_buy_point(
     """Separate a continuous score from a confirmed, executable-later setup."""
 
     resolved_thresholds = thresholds or ScoreThresholds()
-    threshold = (
-        resolved_thresholds.add_buy_score
-        if for_add
-        else resolved_thresholds.open_buy_score
-    )
+    threshold = resolved_thresholds.add_buy_score if for_add else resolved_thresholds.open_buy_score
     matched = matched_entry_variants(features)
     confirming = matched_confirming_entry_variants(features)
-    strengths = {
-        name: float(features.variant_evidence[name].strength or 0.0)
-        for name in matched
-    }
+    strengths = {name: float(features.variant_evidence[name].strength or 0.0) for name in matched}
     primary = matched[0] if matched else ""
     primary_confirming = confirming[0] if confirming else ""
     reasons: list[str] = []

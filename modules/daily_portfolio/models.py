@@ -97,19 +97,11 @@ class PositionState:
         if not math.isfinite(self.avg_cost) or self.avg_cost < 0:
             raise ValueError("avg_cost must be finite and non-negative")
         _validate_pct("current_position_pct", self.current_position_pct)
-        if self.stop_loss is not None and (
-            not math.isfinite(self.stop_loss) or self.stop_loss <= 0
-        ):
+        if self.stop_loss is not None and (not math.isfinite(self.stop_loss) or self.stop_loss <= 0):
             raise ValueError("stop_loss must be finite and positive")
         if self.shares == 0:
-            if (
-                self.available_shares != 0
-                or self.avg_cost != 0
-                or self.current_position_pct != 0
-            ):
-                raise ValueError(
-                    "an empty position cannot carry shares, cost, or exposure"
-                )
+            if self.available_shares != 0 or self.avg_cost != 0 or self.current_position_pct != 0:
+                raise ValueError("an empty position cannot carry shares, cost, or exposure")
             if self.lifecycle_state not in (
                 LifecycleState.FLAT,
                 LifecycleState.READY,
@@ -130,9 +122,7 @@ class PositionState:
             ):
                 raise ValueError("held position lifecycle state is inconsistent")
         if self.can_sell_date:
-            object.__setattr__(
-                self, "can_sell_date", normalize_trade_date(self.can_sell_date)
-            )
+            object.__setattr__(self, "can_sell_date", normalize_trade_date(self.can_sell_date))
 
 
 @dataclass(frozen=True)
@@ -160,11 +150,7 @@ class DailyStockScore:
         if not self.ts_code:
             raise ValueError("ts_code cannot be empty")
         object.__setattr__(self, "signal_date", normalize_trade_date(self.signal_date))
-        last_bar_date = (
-            normalize_trade_date(self.last_bar_date)
-            if self.last_bar_date
-            else self.signal_date
-        )
+        last_bar_date = normalize_trade_date(self.last_bar_date) if self.last_bar_date else self.signal_date
         if last_bar_date > self.signal_date:
             raise ValueError("last_bar_date cannot be after signal_date")
         object.__setattr__(self, "last_bar_date", last_bar_date)
@@ -180,10 +166,7 @@ class DailyStockScore:
                 raise ValueError("hard exit reasons require a zero target position")
             if self.desired_action in (TradeAction.OPEN, TradeAction.ADD):
                 raise ValueError("hard exit reasons cannot create buy exposure")
-            if (
-                self.current_position_pct > 0
-                and self.desired_action != TradeAction.EXIT
-            ):
+            if self.current_position_pct > 0 and self.desired_action != TradeAction.EXIT:
                 raise ValueError("a held position with hard exit reasons must EXIT")
         if self.vetoes and self.desired_action in (TradeAction.OPEN, TradeAction.ADD):
             raise ValueError("hard vetoes cannot create buy exposure")

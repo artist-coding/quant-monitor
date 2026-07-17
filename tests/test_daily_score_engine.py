@@ -44,9 +44,7 @@ def test_uniform_components_preserve_normalized_score() -> None:
 
 
 def test_risk_penalty_is_auditable_negative_contribution() -> None:
-    result = aggregate_scores(
-        ScoreEvidence(buy=_buy(80), sell=_sell(20), risk_penalty_points=17)
-    )
+    result = aggregate_scores(ScoreEvidence(buy=_buy(80), sell=_sell(20), risk_penalty_points=17))
 
     assert result.buy_score == 63
     assert result.buy_contributions["risk_penalty"] == -17

@@ -51,9 +51,7 @@ def test_pending_buy_and_sell_states_are_explicit() -> None:
         ExecutionMode.NEXT_OPEN_STRICT,
         "20260713",
     )
-    held, held_transition = resolve_lifecycle_after_day(
-        _held(), [sell], trade_date="20260710"
-    )
+    held, held_transition = resolve_lifecycle_after_day(_held(), [sell], trade_date="20260710")
     assert held.lifecycle_state == LifecycleState.PENDING_SELL
     assert held_transition.reason == "pending_sell"
 
@@ -75,13 +73,9 @@ def test_blocked_sell_has_priority_over_pending_state() -> None:
 
 
 def test_fill_states_settle_to_holding_on_a_later_quiet_day() -> None:
-    building, _ = resolve_lifecycle_after_day(
-        _held(), [], trade_date="20260710", had_buy_fill=True
-    )
+    building, _ = resolve_lifecycle_after_day(_held(), [], trade_date="20260710", had_buy_fill=True)
     assert building.lifecycle_state == LifecycleState.BUILDING
 
-    holding, transition = resolve_lifecycle_after_day(
-        building, [], trade_date="20260713"
-    )
+    holding, transition = resolve_lifecycle_after_day(building, [], trade_date="20260713")
     assert holding.lifecycle_state == LifecycleState.HOLDING
     assert transition.from_state == LifecycleState.BUILDING

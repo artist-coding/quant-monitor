@@ -58,13 +58,7 @@ def _scores(
 
 def test_high_context_score_without_a_matched_entry_variant_is_not_confirmed() -> None:
     result = assess_buy_point(
-        _features(
-            {
-                "b1.loose_3of4": VariantEvidence(
-                    "b1.loose_3of4", matched=False, strength=50
-                )
-            }
-        ),
+        _features({"b1.loose_3of4": VariantEvidence("b1.loose_3of4", matched=False, strength=50)}),
         _scores(buy=92),
         reference_close=10,
         planned_stop_loss=9,
@@ -80,12 +74,8 @@ def test_matched_variant_score_and_valid_stop_confirm_the_buy_point() -> None:
     result = assess_buy_point(
         _features(
             {
-                "b1.quality_confirmed": VariantEvidence(
-                    "b1.quality_confirmed", matched=True, strength=100
-                ),
-                "b3.consensus_continuation": VariantEvidence(
-                    "b3.consensus_continuation", matched=True, strength=75
-                ),
+                "b1.quality_confirmed": VariantEvidence("b1.quality_confirmed", matched=True, strength=100),
+                "b3.consensus_continuation": VariantEvidence("b3.consensus_continuation", matched=True, strength=75),
             }
         ),
         _scores(buy=84),
@@ -111,12 +101,8 @@ def test_research_only_loose_b1_and_b3_cannot_authorize_an_entry() -> None:
     result = assess_buy_point(
         _features(
             {
-                "b1.loose_3of4": VariantEvidence(
-                    "b1.loose_3of4", matched=True, strength=100
-                ),
-                "b3.consensus_continuation": VariantEvidence(
-                    "b3.consensus_continuation", matched=True, strength=100
-                ),
+                "b1.loose_3of4": VariantEvidence("b1.loose_3of4", matched=True, strength=100),
+                "b3.consensus_continuation": VariantEvidence("b3.consensus_continuation", matched=True, strength=100),
             }
         ),
         _scores(buy=95),
@@ -128,18 +114,14 @@ def test_research_only_loose_b1_and_b3_cannot_authorize_an_entry() -> None:
     assert result.setup_matched is True
     assert result.confirmation_setup_matched is False
     assert result.confirming_variants == ()
-    assert result.blocking_reasons == (
-        "RESEARCH_VARIANT_NOT_CONFIRMATION_QUALIFIED",
-    )
+    assert result.blocking_reasons == ("RESEARCH_VARIANT_NOT_CONFIRMATION_QUALIFIED",)
 
 
 def test_sell_evidence_and_unconfirmed_false_break_do_not_raise_buy_resonance() -> None:
     features = _features(
         {
             "s1.ugly_hat": VariantEvidence("s1.ugly_hat", True, 90),
-            "s2.anchor_divergence": VariantEvidence(
-                "s2.anchor_divergence", True, 85
-            ),
+            "s2.anchor_divergence": VariantEvidence("s2.anchor_divergence", True, 85),
             "sb1.false_break": VariantEvidence("sb1.false_break", True, 100),
         }
     )
@@ -153,15 +135,9 @@ def test_sell_evidence_and_unconfirmed_false_break_do_not_raise_buy_resonance() 
 def test_only_whitelisted_matched_entry_families_contribute_to_resonance() -> None:
     features = _features(
         {
-            "b1.strict_oversold": VariantEvidence(
-                "b1.strict_oversold", True, 100
-            ),
-            "b1.quality_confirmed": VariantEvidence(
-                "b1.quality_confirmed", True, 100
-            ),
-            "b2.knowledge_5bar": VariantEvidence(
-                "b2.knowledge_5bar", True, 100
-            ),
+            "b1.strict_oversold": VariantEvidence("b1.strict_oversold", True, 100),
+            "b1.quality_confirmed": VariantEvidence("b1.quality_confirmed", True, 100),
+            "b2.knowledge_5bar": VariantEvidence("b2.knowledge_5bar", True, 100),
         }
     )
 
@@ -173,13 +149,7 @@ def test_only_whitelisted_matched_entry_families_contribute_to_resonance() -> No
 
 def test_invalid_signal_day_stop_blocks_an_otherwise_confirmed_setup() -> None:
     result = assess_buy_point(
-        _features(
-            {
-                "b2.knowledge_5bar": VariantEvidence(
-                    "b2.knowledge_5bar", True, 100
-                )
-            }
-        ),
+        _features({"b2.knowledge_5bar": VariantEvidence("b2.knowledge_5bar", True, 100)}),
         _scores(buy=90),
         reference_close=10,
         planned_stop_loss=10,
@@ -191,13 +161,7 @@ def test_invalid_signal_day_stop_blocks_an_otherwise_confirmed_setup() -> None:
 
 def test_hard_exit_blocks_buy_point_even_when_entry_evidence_is_strong() -> None:
     result = assess_buy_point(
-        _features(
-            {
-                "b1.quality_confirmed": VariantEvidence(
-                    "b1.quality_confirmed", True, 100
-                )
-            }
-        ),
+        _features({"b1.quality_confirmed": VariantEvidence("b1.quality_confirmed", True, 100)}),
         _scores(buy=95, sell=100, hard_exit_reasons=("EXIT_STOP_LOSS",)),
         reference_close=10,
         planned_stop_loss=9,

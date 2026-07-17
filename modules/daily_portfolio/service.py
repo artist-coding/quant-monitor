@@ -50,9 +50,7 @@ def evaluate_daily_bar(
     if position.ts_code != ts_code:
         raise ValueError("position must match ts_code")
     if position.shares > 0 and position.stop_loss is None:
-        raise ValueError(
-            "a held position requires an explicit persisted stop_loss before scoring"
-        )
+        raise ValueError("a held position requires an explicit persisted stop_loss before scoring")
     if not bars or any(bar.ts_code != ts_code for bar in bars):
         raise ValueError("all bars must match ts_code")
 
@@ -64,9 +62,7 @@ def evaluate_daily_bar(
         market_context,
         max_position_pct=max_position_pct,
     )
-    aggregated = aggregate_scores(
-        adapted.score_evidence, resolved_config.score_weights
-    )
+    aggregated = aggregate_scores(adapted.score_evidence, resolved_config.score_weights)
     stop_loss = position.stop_loss
     if stop_loss is None:  # Flat position: initialize the next entry's stop.
         lookback = min(len(bars), resolved_config.entry_stop_lookback_bars)

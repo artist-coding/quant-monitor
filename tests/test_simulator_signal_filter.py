@@ -90,9 +90,7 @@ def test_extract_signals_reads_bull_rope_status(status, expected_signal):
         ("正常震荡", "死叉", SignalVerdict.BAD_STAGE),
     ],
 )
-def test_simple_mode_applies_extracted_contract_signals(
-    scenario, rope_status, expected_verdict
-):
+def test_simple_mode_applies_extracted_contract_signals(scenario, rope_status, expected_verdict):
     klines = [MagicMock() for _ in range(120)]
     config = SimulationConfig(strategy_mode="simple")
 
@@ -140,9 +138,7 @@ def test_extract_signals_ignores_bull_rope_default_when_history_is_short():
             return_value={"score": 0, "is_perfect": False},
         ),
     ):
-        signals = _extract_signals(
-            _stock_score(), [MagicMock() for _ in range(119)]
-        )
+        signals = _extract_signals(_stock_score(), [MagicMock() for _ in range(119)])
 
     bull_rope.assert_not_called()
     assert "牛绳断" not in signals

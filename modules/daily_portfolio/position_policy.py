@@ -13,7 +13,7 @@ returns the same decision.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from .config import ScoreThresholds
 from .models import DailyStockScore, PositionState, TradeAction
@@ -230,8 +230,7 @@ def evaluate_position_policy(
     target_position_pct = target_ratio * max_position_pct
     if (
         action in (TradeAction.OPEN, TradeAction.ADD)
-        and abs(target_position_pct - position.current_position_pct)
-        < minimum_position_delta_pct
+        and abs(target_position_pct - position.current_position_pct) < minimum_position_delta_pct
     ):
         target_index = current_index if has_position else 0
         target_ratio = ladder[target_index]

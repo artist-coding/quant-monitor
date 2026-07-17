@@ -8,6 +8,7 @@ into explicit 0..100 component scores before calling it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 
 from .config import ScoreWeights
@@ -78,20 +79,14 @@ class AggregatedScores:
     hard_exit_reasons: tuple[str, ...]
 
 
-def _weighted_contributions(
-    components: dict[str, float], weights: dict[str, float]
-) -> dict[str, float]:
+def _weighted_contributions(components: Mapping[str, float], weights: Mapping[str, float]) -> dict[str, float]:
     missing = set(weights) - set(components)
     unexpected = set(components) - set(weights)
     if missing or unexpected:
         raise ValueError(
-            "score component/weight contract mismatch: "
-            f"missing={sorted(missing)}, unexpected={sorted(unexpected)}"
+            f"score component/weight contract mismatch: missing={sorted(missing)}, unexpected={sorted(unexpected)}"
         )
-    return {
-        name: round(weights[name] * components[name] / 100.0, 6)
-        for name in weights
-    }
+    return {name: round(weights[name] * components[name] / 100.0, 6) for name in weights}
 
 
 def aggregate_scores(
@@ -101,12 +96,8 @@ def aggregate_scores(
     """Aggregate normalized evidence without any state or execution decisions."""
 
     configured_weights = weights or ScoreWeights()
-    buy_contributions = _weighted_contributions(
-        evidence.buy.as_mapping(), configured_weights.buy
-    )
-    sell_contributions = _weighted_contributions(
-        evidence.sell.as_mapping(), configured_weights.sell
-    )
+    buy_contributions = _weighted_contributions(evidence.buy.as_mapping(), configured_weights.buy)
+    sell_contributions = _weighted_contributions(evidence.sell.as_mapping(), configured_weights.sell)
 
     buy_contributions["risk_penalty"] = -evidence.risk_penalty_points
     buy_score = max(0.0, min(100.0, sum(buy_contributions.values())))

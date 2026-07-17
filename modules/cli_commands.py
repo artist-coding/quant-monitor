@@ -713,7 +713,8 @@ def _simulate_narrate_text(result: Any, wf_payload: dict[str, Any] | None) -> di
         return {
             "simulation_id": "walk_forward",
             "ts_codes": [],
-            "days": wf_payload.get("config", {}).get("train_days", 0) + wf_payload.get("config", {}).get("test_days", 0),
+            "days": wf_payload.get("config", {}).get("train_days", 0)
+            + wf_payload.get("config", {}).get("test_days", 0),
             "narrative_text": "\n".join(narrative_lines),
             "generated_at": "",
             "model_used": "",

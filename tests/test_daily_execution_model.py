@@ -129,9 +129,7 @@ def test_strict_sell_uses_next_day_open() -> None:
 
 
 def test_same_close_research_sell_is_explicit_and_uses_close() -> None:
-    order = create_sell_order(
-        _score(TradeAction.EXIT, 0), ExecutionMode.SAME_CLOSE_RESEARCH
-    )
+    order = create_sell_order(_score(TradeAction.EXIT, 0), ExecutionMode.SAME_CLOSE_RESEARCH)
     result = execute_target_order(
         order,
         _bar("20260710", open_price=8, close=12),
@@ -240,9 +238,7 @@ def test_slippage_fill_respects_price_tick_and_inferred_limit_bound() -> None:
 
 
 def test_t1_blocks_same_day_sell_when_no_shares_are_available() -> None:
-    order = create_sell_order(
-        _score(TradeAction.EXIT, 0), ExecutionMode.SAME_CLOSE_RESEARCH
-    )
+    order = create_sell_order(_score(TradeAction.EXIT, 0), ExecutionMode.SAME_CLOSE_RESEARCH)
     result = execute_target_order(
         order,
         _bar("20260710", open_price=10, close=10),
@@ -422,10 +418,7 @@ def test_fill_id_includes_the_canonical_execution_config() -> None:
     assert base.fill.fill_price == changed.fill.fill_price
     assert base.fill.shares == changed.fill.shares
     assert base.fill.execution_config_fingerprint == base_config.canonical_fingerprint
-    assert (
-        changed.fill.execution_config_fingerprint
-        == changed_config.canonical_fingerprint
-    )
+    assert changed.fill.execution_config_fingerprint == changed_config.canonical_fingerprint
     assert base.fill.execution_config_fingerprint != changed.fill.execution_config_fingerprint
     assert base.fill.fill_id != changed.fill.fill_id
 
