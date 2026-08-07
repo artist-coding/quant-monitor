@@ -2,7 +2,7 @@
 
 import pytest
 
-from modules.self_optimizer.param_registry import (
+from modules.param_registry import (
     get_registry,
     get_defaults,
     get_param_info,

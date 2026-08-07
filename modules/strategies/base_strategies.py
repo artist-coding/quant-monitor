@@ -1,7 +1,7 @@
 from typing import Optional
 from ..indicators import DailyData
 from .core import StrategyType, StrategySignal, Priority, Action, _get_kdj, _get_bbi, _ensure_daily_klines
-from modules.self_optimizer.param_registry import get_active_param
+from modules.param_registry import get_active_param
 
 
 def _safe_num(val, default=0):

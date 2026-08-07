@@ -243,7 +243,7 @@ def backtest_strategy(
     os.environ["HTTPS_PROXY"] = ""
 
     try:
-        from modules.self_optimizer.param_registry import get_active_param
+        from modules.param_registry import get_active_param
     except ImportError:
 
         def get_active_param(strategy: str, name: str, default: Any = None) -> Any:
