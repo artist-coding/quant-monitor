@@ -1,0 +1,26 @@
+[Unit]
+Description=Quant Monitor FastAPI backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/quant-monitor
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Environment=KIMI_CLI_PATH=/root/.kimi-code/bin/kimi
+Environment=KIMI_RESEARCH_TIMEOUT=3600
+Environment=KIMI_RESEARCH_IDLE_TIMEOUT=600
+Environment=KIMI_RESEARCH_SYNTHESIS_TIMEOUT=900
+EnvironmentFile=-/root/quant-monitor/.env
+ExecStart=/usr/bin/python3 -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Quant Monitor daily sync after A-share close
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 16:30:00 Asia/Shanghai
+AccuracySec=1min
+RandomizedDelaySec=60
+Unit=quant-monitor-daily-sync.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,195 @@
+@import "tailwindcss";
+
+/* Z哥量化 — 深色金融终端主题 */
+@theme {
+  --color-bg-primary: #05070d; /* 近黑深蓝底 */
+  --color-bg-secondary: rgba(13, 18, 32, 0.85); /* 侧栏/顶栏 */
+  --color-bg-card: rgba(17, 23, 41, 0.55); /* 卡片 */
+  --color-bg-elevated: rgba(23, 30, 51, 0.92); /* 浮层/下拉 */
+  --color-bg-hover: rgba(35, 44, 70, 0.6);
+  --color-border: rgba(148, 163, 184, 0.13);
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #5d6c84;
+  --color-accent-red: #f43f5e; /* Rose 500 — 涨 */
+  --color-accent-green: #10b981; /* Emerald 500 — 跌 */
+  --color-accent-gold: #f5b942; /* 品牌金 */
+  --color-accent-orange: #f97316; /* Orange 500 */
+  --color-accent-blue: #4f8ef7;
+  --color-accent-purple: #9d6bf5;
+  --color-accent-cyan: #22c3d6;
+}
+
+/* 全局样式 */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg-primary);
+  background-image:
+    radial-gradient(ellipse 60% 45% at 85% -5%, rgba(59, 91, 246, 0.10), transparent 60%),
+    radial-gradient(ellipse 50% 40% at -5% 100%, rgba(245, 185, 66, 0.06), transparent 60%),
+    radial-gradient(ellipse 40% 35% at 50% 110%, rgba(157, 107, 245, 0.05), transparent 60%),
+    linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+  background-size: auto, auto, auto, 44px 44px, 44px 44px;
+  background-attachment: fixed;
+  color: var(--color-text-primary);
+  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', monospace;
+}
+
+/* 选中文字 */
+::selection {
+  background: rgba(245, 185, 66, 0.25);
+  color: #fff;
+}
+
+/* 焦点环 */
+:focus-visible {
+  outline: 2px solid rgba(245, 185, 66, 0.5);
+  outline-offset: 1px;
+}
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.35);
+  background-clip: content-box;
+}
+
+/* 涨跌颜色 */
+.text-up { color: var(--color-accent-red); }
+.text-down { color: var(--color-accent-green); }
+.bg-up { background-color: var(--color-accent-red); }
+.bg-down { background-color: var(--color-accent-green); }
+
+/* 统一表单控件 */
+.input-dark {
+  border-radius: 0.625rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(9, 12, 22, 0.7);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+.input-dark::placeholder {
+  color: var(--color-text-muted);
+}
+.input-dark:hover {
+  border-color: rgba(148, 163, 184, 0.28);
+}
+.input-dark:focus {
+  border-color: rgba(245, 185, 66, 0.55);
+  box-shadow: 0 0 0 3px rgba(245, 185, 66, 0.10);
+  background: rgba(9, 12, 22, 0.9);
+}
+select.input-dark {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 1.8rem;
+}
+select.input-dark option {
+  background: #111827;
+  color: var(--color-text-primary);
+}
+
+/* 页面进入动画 */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fade-up 0.45s cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+.animate-fade-up-1 { animation-delay: 0.05s; }
+.animate-fade-up-2 { animation-delay: 0.12s; }
+.animate-fade-up-3 { animation-delay: 0.19s; }
+.animate-fade-up-4 { animation-delay: 0.26s; }
+
+/* 呼吸光点 */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-soft-pulse {
+  animation: soft-pulse 2.2s ease-in-out infinite;
+}
+
+/* ── 炫酷增强 ── */
+
+/* 展示用衬线大字 */
+.font-display {
+  font-family: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', Georgia, serif;
+}
+
+/* 金色辉光文字 */
+.text-glow-gold {
+  text-shadow:
+    0 0 18px rgba(245, 185, 66, 0.45),
+    0 0 60px rgba(245, 185, 66, 0.22),
+    0 2px 30px rgba(245, 185, 66, 0.18);
+}
+
+/* 卡片悬停扫光 */
+.card-shine {
+  position: relative;
+  overflow: hidden;
+}
+.card-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.07) 48%, rgba(245, 185, 66, 0.10) 52%, transparent 62%);
+  transform: translateX(-110%);
+  transition: transform 0.7s cubic-bezier(0.22, 0.8, 0.3, 1);
+  pointer-events: none;
+}
+.card-shine:hover::after {
+  transform: translateX(110%);
+}
+
+/* 噪点颗粒（电影感） */
+.bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* Hero 装饰横线 */
+.hero-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(245, 185, 66, 0.55), transparent);
+}
+
+/* 主按钮呼吸辉光 */
+@keyframes cta-glow {
+  0%, 100% { box-shadow: 0 2px 14px -2px rgba(245, 185, 66, 0.45), 0 0 0 0 rgba(245, 185, 66, 0.18); }
+  50% { box-shadow: 0 2px 22px -2px rgba(245, 185, 66, 0.65), 0 0 24px 2px rgba(245, 185, 66, 0.12); }
+}
+.animate-cta-glow {
+  animation: cta-glow 2.6s ease-in-out infinite;
+}

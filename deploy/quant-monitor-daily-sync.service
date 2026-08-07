@@ -1,0 +1,16 @@
+[Unit]
+Description=Quant Monitor post-close A-share daily sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/quant-monitor
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/root/quant-monitor/.env
+ExecStart=/usr/bin/python3 -m modules.cli sync market-daily --json
+UMask=0077
+Nice=5
+
