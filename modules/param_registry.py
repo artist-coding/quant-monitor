@@ -11,7 +11,7 @@ Param Registry — 可进化参数清单
   4. 每个参数标注对策略的 **预期影响方向**
 
 使用方式：
-  from modules.self_optimizer.param_registry import get_defaults, get_param_info
+  from modules.param_registry import get_defaults, get_param_info
 
   # 拿到全部默认值
   defaults = get_defaults()

@@ -59,7 +59,6 @@ from api.routes.screen import router as screen_router
 from api.routes.watchlist import router as watchlist_router
 from api.routes.diagnosis import router as diagnosis_router
 from api.routes.backtest import router as backtest_router
-from api.routes.simulator import router as simulator_router
 from api.routes.trade import router as trade_router
 from api.routes.system import router as system_router
 from api.routes.commentary import router as commentary_router
@@ -71,7 +70,6 @@ app.include_router(screen_router, prefix=f"{prefix}/screen", tags=["screen"])
 app.include_router(watchlist_router, prefix=f"{prefix}/watchlist", tags=["watchlist"])
 app.include_router(diagnosis_router, prefix=f"{prefix}/diagnosis", tags=["diagnosis"])
 app.include_router(backtest_router, prefix=f"{prefix}/backtest", tags=["backtest"])
-app.include_router(simulator_router, prefix=f"{prefix}/simulator", tags=["simulator"])
 app.include_router(trade_router, prefix=f"{prefix}/trade", tags=["trade"])
 app.include_router(system_router, prefix=f"{prefix}/system", tags=["system"])
 app.include_router(commentary_router, prefix=f"{prefix}", tags=["commentary"])

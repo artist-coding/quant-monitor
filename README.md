@@ -8,8 +8,8 @@
 
 - 单股分析：技术指标、战法信号、主力阶段、综合评分。
 - 条件选股：按 B1、突破、量价、图形等策略扫描本地股票池。
-- 回测与模拟：支持策略回测、A 股 T+1/涨跌停/成本约束、ATR 仓位等模拟逻辑。
-- 持仓与观察池：维护自选股、扫描风险信号、生成诊断结果。
+- 回测：多策略融合回测与多股组合回测，用于验证战法有效性。
+- 持仓与观察池：维护自选股、扫描买卖信号、生成诊断结果与预警推送。
 - Web 看板：FastAPI 后端 + React 前端，作为可选界面。
 - LLM 点评：读取结构化分析结果后生成中文解释，不参与指标计算。
 
@@ -161,12 +161,9 @@ api/                  FastAPI 后端
 frontend/             React Web 看板
 modules/              核心 Python 逻辑
 modules/indicators/   技术指标和形态识别
-modules/strategies/   策略信号
+modules/strategies/   策略信号（B1/B2/B3 买入、S1/S2/S3 等卖出）
 modules/screener/     选股引擎
-modules/simulator/    端到端模拟器
 modules/data_sync/    数据同步
-knowledge/            LLM 点评参考知识
-rules/                意图路由和非股票场景提示词
 scripts/              数据维护和批处理脚本
 tests/                自动化测试
 docs/                 使用说明、变更记录和归档资料

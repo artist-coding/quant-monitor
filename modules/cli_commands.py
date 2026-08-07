@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-CLI 扩展命令模块（待集成到 cli.py）
+CLI 扩展命令模块（配合 cli.py 使用）
 
-提供三个新命令：
-  - backtest  : 少妇战法 / 多策略融合 / 组合回测（支持 JSON 输出）
-  - trade     : 交易记录的增删查改 + 复盘
+提供的命令：
+  - backtest  : 多策略融合 / 组合回测（支持 JSON 输出）
+  - trade     : 交易记录的增删查改
   - daily     : 每日五步工作流（观察池 + 选股 + 持仓检查 + 信号汇总 + 报告）
+  - monitor   : 自选股主动预警与扫描推送
 
 用法示例：
-    python -m modules.cli_commands backtest shaofu 600487.SH --days 250 --json
-    python -m modules.cli_commands trade add "4月25号买了100股茅台，1800块"
-    python -m modules.cli_commands daily --json
+    python -m modules.cli backtest multi 600487.SH --days 250 --json
+    python -m modules.cli trade add "4月25号买了100股茅台，1800块"
+    python -m modules.cli daily --json
 """
 
 from __future__ import annotations
@@ -44,49 +45,6 @@ def _warn(msg: str) -> None:
 
 
 # ==================== 1. cmd_backtest ====================
-
-
-def _shaofu_result_to_dict(result: Any) -> dict:
-    """
-    将 ShaofuBacktestResult 转换为可序列化的字典
-
-    输出格式与需求文档一致：
-    {
-        "ts_code", "total_trades", "win_count", "win_rate",
-        "avg_pnl", "max_win", "max_loss", "profit_factor",
-        "total_return", "max_drawdown", "sharpe_ratio",
-        "avg_holding_days", "trades": [...]
-    }
-    """
-    trades = []
-    for t in result.trades:
-        trades.append(
-            {
-                "entry_date": t.entry_date,
-                "entry_price": t.entry_price,
-                "exit_date": t.exit_date,
-                "exit_price": t.exit_price,
-                "exit_reason": t.exit_reason,
-                "pnl_pct": round(t.pnl_pct * 100, 2),  # 转为百分比数值
-                "holding_days": t.holding_days,
-            }
-        )
-
-    return {
-        "ts_code": result.ts_code,
-        "total_trades": result.total_trades,
-        "win_count": result.win_count,
-        "win_rate": round(result.win_rate, 3),
-        "avg_pnl": round(result.avg_pnl * 100, 2),
-        "max_win": round(result.max_win * 100, 2),
-        "max_loss": round(result.max_loss * 100, 2),
-        "profit_factor": round(result.profit_factor, 2),
-        "total_return": round(result.total_return * 100, 2),
-        "max_drawdown": round(result.max_drawdown * 100, 2),
-        "sharpe_ratio": round(result.sharpe_ratio, 2),
-        "avg_holding_days": round(result.avg_holding_days, 1),
-        "trades": trades,
-    }
 
 
 def _portfolio_result_to_dict(result: Any) -> dict:
@@ -123,38 +81,16 @@ def _portfolio_result_to_dict(result: Any) -> dict:
     }
 
 
-def _shaofu_portfolio_to_dict(result: dict) -> dict:
-    """
-    将 backtest_shaofu_portfolio 返回的 dict 清理为可序列化格式
-
-    去掉 results 中不可序列化的对象，只保留摘要
-    """
-    per_stock = []
-    for r in result.get("results", []):
-        per_stock.append(_shaofu_result_to_dict(r))
-
-    return {
-        "per_stock": per_stock,
-        "total_return": round(result.get("total_return", 0) * 100, 2),
-        "total_trades": result.get("total_trades", 0),
-        "overall_win_rate": round(result.get("overall_win_rate", 0), 3),
-        "max_drawdown": round(result.get("max_drawdown", 0) * 100, 2),
-        "sharpe_ratio": round(result.get("sharpe_ratio", 0), 2),
-    }
-
-
 def cmd_backtest(args) -> None:
     """
     回测命令
 
     子命令：
-        shaofu   <ts_code>  [--days N] [--json]          少妇战法单股回测
         multi    <ts_code>  [--days N] [--json]          多策略融合回测
         portfolio <c1,c2,..> [--days N] [--json]         组合回测
 
     示例：
-        zt backtest shaofu 600487.SH --days 250 --json
-        zt backtest multi 600487.SH --strategy b1,b2 --days 120 --json
+        zt backtest multi 600487.SH --days 120 --json
         zt backtest portfolio 600487.SH,601318.SH --days 120 --json
     """
     sub = getattr(args, "backtest_sub", None)
@@ -162,31 +98,12 @@ def cmd_backtest(args) -> None:
     days = getattr(args, "days", 250)
 
     if not sub:
-        _error("请指定回测子命令: shaofu / multi / portfolio")
+        _error("请指定回测子命令: multi / portfolio")
 
     ts_code = getattr(args, "ts_code", None)
 
-    # ── shaofu: 少妇战法单股回测 ──
-    if sub == "shaofu":
-        if not ts_code:
-            _error("请指定股票代码，如: backtest shaofu 600487.SH")
-
-        from .backtest_six_step import backtest_shaofu_single
-
-        result_sf = backtest_shaofu_single(ts_code, days=days)
-
-        if result_sf.total_trades == 0:
-            _warn(f"{ts_code} 在 {days} 天内无交易记录（数据不足或无信号触发）")
-
-        if use_json:
-            _json_output(_shaofu_result_to_dict(result_sf))
-        else:
-            from .backtest_six_step import summary_text
-
-            print(summary_text(result_sf))
-
     # ── multi: 多策略融合回测 ──
-    elif sub == "multi":
+    if sub == "multi":
         if not ts_code:
             _error("请指定股票代码，如: backtest multi 600487.SH")
 
@@ -214,37 +131,15 @@ def cmd_backtest(args) -> None:
         if not ts_codes:
             _error("股票代码列表为空")
 
-        # 单股票时走少妇单股回测，多股票走少妇组合回测
-        if len(ts_codes) == 1:
-            from .backtest_six_step import backtest_shaofu_single
+        from .backtest import backtest_portfolio
 
-            result_sf_single = backtest_shaofu_single(ts_codes[0], days=days)
-            if use_json:
-                _json_output(_shaofu_result_to_dict(result_sf_single))
-            else:
-                from .backtest_six_step import summary_text
+        stock_configs = [{"ts_code": code} for code in ts_codes]
+        result_port = backtest_portfolio(stock_configs, days=days)
 
-                print(summary_text(result_sf_single))
+        if use_json:
+            _json_output(_portfolio_result_to_dict(result_port))
         else:
-            from .backtest_six_step import backtest_shaofu_portfolio
-
-            result_port = backtest_shaofu_portfolio(ts_codes, days=days)
-            if use_json:
-                _json_output(_shaofu_portfolio_to_dict(result_port))
-            else:
-                print(f"{'=' * 60}")
-                print("少妇战法组合回测结果")
-                print(f"{'=' * 60}")
-                print(f"股票数量:     {len(ts_codes)}")
-                print(f"总交易次数:   {result_port['total_trades']}")
-                print(f"整体胜率:     {result_port['overall_win_rate']:.1%}")
-                print(f"累计收益:     {result_port['total_return']:+.2%}")
-                print(f"最大回撤:     {result_port['max_drawdown']:.2%}")
-                print(f"夏普比率:     {result_port['sharpe_ratio']:.2f}")
-                print(f"{'=' * 60}")
-                for r in result_port.get("results", []):
-                    status = "有交易" if r.total_trades > 0 else "无交易"
-                    print(f"  {r.ts_code}: {status} {r.total_trades}笔 胜率{r.win_rate:.0%} 收益{r.total_return:+.2%}")
+            print(result_port.summary())
 
     else:
         _error(f"未知回测子命令: {sub}")
@@ -260,20 +155,18 @@ def cmd_trade(args) -> None:
     子命令：
         add   "口语化交易描述"           解析并保存交易记录
         list  [--json]                   列出最近交易记录
-        review [--json]                  构建复盘上下文（给 LLM 的 prompt）
         stats [--json]                   交易统计摘要
 
     示例：
         zt trade add "4月25号买了100股茅台，1800块"
         zt trade list --json
-        zt trade review --json
         zt trade stats --json
     """
     sub = getattr(args, "trade_sub", None)
     use_json = getattr(args, "json", False)
 
     if not sub:
-        _error("请指定交易子命令: add / list / review / stats")
+        _error("请指定交易子命令: add / list / stats")
 
     # ── add: 解析并保存交易 ──
     if sub == "add":
@@ -353,54 +246,6 @@ def cmd_trade(args) -> None:
                     f"  {t.get('quantity', 0)}股 @ {t.get('price', 0)}元"
                 )
             print(f"{'=' * 70}")
-
-    # ── review: 构建复盘上下文 ──
-    elif sub == "review":
-        from .trade_manager import TradeManager
-        from .trade_reviewer import TradeReviewer
-
-        manager = TradeManager()
-        reviewer = TradeReviewer()
-
-        # 获取最近一笔交易
-        trades = manager.get_recent_trades(limit=1)
-        if not trades:
-            _warn("暂无交易记录，请先添加交易")
-            return
-
-        trade = trades[0]
-        ctx = reviewer.prepare_review_context(trade)
-        ctx = reviewer.enrich_with_indicators(ctx)
-
-        if ctx.action == "SELL":
-            ctx = reviewer.enrich_with_buy_info(ctx)
-        ctx = reviewer.check_if_complete_trade(ctx)
-
-        if use_json:
-            _json_output(
-                {
-                    "ts_code": ctx.ts_code,
-                    "name": ctx.name,
-                    "trade_date": ctx.trade_date,
-                    "action": ctx.action,
-                    "price": ctx.price,
-                    "quantity": ctx.quantity,
-                    "amount": ctx.amount,
-                    "reason": ctx.reason,
-                    "avg_cost": ctx.avg_cost,
-                    "profit_pct": ctx.profit_pct,
-                    "holding_days": ctx.holding_days,
-                    "signal_type": ctx.signal_type,
-                    "is_complete_trade": ctx.is_complete_trade,
-                    "indicators": ctx.indicators,
-                    "prompt": ctx.get_full_prompt(),
-                }
-            )
-        else:
-            print(ctx.to_llm_prompt())
-            print()
-            print("--- Z哥点评 Prompt ---")
-            print(ctx.get_full_prompt())
 
     # ── stats: 交易统计 ──
     elif sub == "stats":
@@ -673,272 +518,3 @@ def cmd_monitor(args):
         # 非 JSON 输出时已经在 run_watchlist_monitor 内部写入了 Markdown 报告，打印简易提示
         print(f"自选股主动扫描监控完成。状态: {res['status']}, 警报总数: {res.get('alerts_count', 0)}")
         print("详细警报分析已输出至 data/reports/monitor_alert.md")
-
-
-def _simulate_narrate_text(result: Any, wf_payload: dict[str, Any] | None) -> dict[str, Any]:
-    """simulate 子命令的 --narrate 适配：单模拟走 narrator；walk-forward 走叙事化摘要。"""
-    if result is not None:
-        try:
-            from .simulator.narrator import generate_simulation_narrative
-
-            return generate_simulation_narrative(result)
-        except Exception as exc:
-            logger.warning("narrate 失败，使用兜底文案: %s", exc)
-            return {
-                "simulation_id": "",
-                "ts_codes": [],
-                "days": 0,
-                "narrative_text": f"[narrate 生成失败] {exc}",
-                "generated_at": "",
-                "model_used": "",
-                "cached": False,
-                "error": "narrate_failed",
-            }
-
-    if wf_payload is not None:
-        oos = wf_payload.get("oos_metrics") or {}
-        narrative_lines = [
-            "【Walk-forward OOS 战绩】",
-            f"- 窗口数: {len(wf_payload.get('windows') or [])}",
-            f"- 训练/验证窗口: {wf_payload.get('config', {}).get('train_days')}/{wf_payload.get('config', {}).get('test_days')}",
-            f"- 目标函数: {wf_payload.get('config', {}).get('objective', 'calmar')}",
-            f"- OOS 年化: {oos.get('annualized_return', 0) * 100:+.2f}%",
-            f"- OOS 夏普: {oos.get('sharpe_ratio', 0):.2f}",
-            f"- OOS Calmar: {oos.get('calmar_ratio', 0):.2f}",
-            f"- OOS 最大回撤: {oos.get('max_drawdown', 0) * 100:.2f}%",
-            f"- 过拟合比率: {wf_payload.get('overfit_ratio', 1.0):.2f}（接近 1 = 不过拟合）",
-            "",
-            "（walk-forward 不调 LLM，直接看 OOS 拼接曲线与稳定性）",
-        ]
-        return {
-            "simulation_id": "walk_forward",
-            "ts_codes": [],
-            "days": wf_payload.get("config", {}).get("train_days", 0) + wf_payload.get("config", {}).get("test_days", 0),
-            "narrative_text": "\n".join(narrative_lines),
-            "generated_at": "",
-            "model_used": "",
-            "cached": False,
-        }
-
-    return {}
-
-
-def _simulate_print_narrative(narrative: dict[str, Any]) -> None:
-    """非 JSON 输出模式：把 narrative 以人类可读形式追加到 stdout。"""
-    print("\n" + "=" * 60)
-    print("Z哥点评")
-    print("=" * 60)
-    text = narrative.get("narrative_text") if narrative else ""
-    if not text:
-        text = narrative.get("error", "点评生成失败") if narrative else "点评生成失败"
-    print(text)
-
-
-def cmd_simulate(args) -> None:
-    """
-    少女/少妇模拟器 CLI 入口（v0.2）。
-
-    示例：
-        zt simulate 600487.SH,601318.SH --days 250 --capital 1000000 --json
-        zt simulate --days 120 --max-positions 3 --score 75
-        zt simulate 600487.SH --cost-model advanced --slippage dynamic --atr-sizing
-        zt simulate 600487.SH --days 250 --narrate --json    # LLM 点评
-    """
-    from dataclasses import asdict
-
-    from .simulator.simulator import run_simulation, summary_text
-    from .simulator import SimulationConfig, CostModel
-
-    use_json = getattr(args, "json", False)
-    days = getattr(args, "days", 250)
-    codes_str = getattr(args, "codes", None)
-
-    # 成本模型：simple 保持 v0.1 默认（仅佣金），advanced 启用完整成本
-    if getattr(args, "cost_model", "simple") == "advanced":
-        cost_model = CostModel()
-    else:
-        cost_model = CostModel(
-            commission_rate=0.0003,
-            min_commission=0.0,
-            stamp_duty_rate=0.0,
-            transfer_fee_rate=0.0,
-            apply_stamp_duty_on_sell=False,
-        )
-
-    config = SimulationConfig(
-        initial_capital=getattr(args, "capital", 1_000_000.0),
-        max_positions=getattr(args, "max_positions", 5),
-        risk_per_trade=getattr(args, "risk", 0.02),
-        position_score_threshold=getattr(args, "score", 70.0),
-        signal_min_count=getattr(args, "signals", 2),
-        benchmark_code=getattr(args, "benchmark", "000300.SH"),
-        cost_model=cost_model,
-        use_dynamic_slippage=getattr(args, "slippage", "fixed") == "dynamic",
-        use_atr_sizing=getattr(args, "atr_sizing", False),
-        max_position_pct=getattr(args, "max_position_pct", 0.20),
-        allow_st=not getattr(args, "no_st", False),
-        t1_lock=getattr(args, "t1_lock", True),
-        strategy_mode=getattr(args, "strategy_mode", "simple"),
-        strategy_lookback_days=getattr(args, "strategy_lookback", 5),
-        min_resonance_score=getattr(args, "min_resonance_score", 0.35),
-    )
-
-    ts_codes = None
-    if codes_str:
-        ts_codes = [c.strip() for c in codes_str.split(",") if c.strip()]
-
-    # 检查是否启用 walk-forward 参数寻优
-    if getattr(args, "walk_forward", False):
-        from .simulator.walk_forward import run_walk_forward, WalkForwardConfig
-        from .simulator.optimizer_report import summary_text as wf_summary_text, to_dict as wf_to_dict
-
-        wf_config = WalkForwardConfig(
-            train_days=getattr(args, "wf_train_days", 120),
-            test_days=getattr(args, "wf_test_days", 60),
-            objective=getattr(args, "wf_objective", "calmar"),
-        )
-
-        wf_result = run_walk_forward(
-            ts_codes=ts_codes,
-            total_days=days,
-            wf_config=wf_config,
-            base_config=config,
-        )
-
-        if use_json:
-            payload = wf_to_dict(wf_result)
-            if getattr(args, "narrate", False):
-                payload["narrative"] = _simulate_narrate_text(result=None, wf_payload=payload)
-            _json_output(payload)
-        else:
-            print(wf_summary_text(wf_result))
-            if getattr(args, "narrate", False):
-                _simulate_print_narrative(_simulate_narrate_text(result=None, wf_payload=None))
-        return
-
-    result = run_simulation(ts_codes=ts_codes, days=days, config=config)
-
-    metrics_dict = asdict(result.metrics) if result.metrics else None
-
-    if use_json:
-        output_dict = {
-            "initial_capital": result.initial_capital,
-            "final_value": result.final_value,
-            "total_return": round(result.total_return * 100, 2),
-            "max_drawdown": round(result.max_drawdown * 100, 2),
-            "sharpe_ratio": round(result.sharpe_ratio, 2),
-            "total_trades": result.total_trades,
-            "win_rate": round(result.win_rate, 3),
-            "profit_factor": round(result.profit_factor, 2),
-            "avg_holding_days": round(result.avg_holding_days, 1),
-            "open_positions": len(result.positions),
-            "trades": [
-                {
-                    "ts_code": t.ts_code,
-                    "action": t.action,
-                    "date": t.date,
-                    "price": t.price,
-                    "shares": t.shares,
-                    "pnl": t.pnl,
-                    "pnl_pct": round(t.pnl_pct * 100, 2),
-                    "reason": t.reason,
-                }
-                for t in result.trades
-            ],
-            "equity_curve_sample": result.equity_curve[:: max(1, len(result.equity_curve) // 30)],
-            "metrics": metrics_dict,
-            "benchmark_curve_sample": result.benchmark_curve[:: max(1, len(result.benchmark_curve) // 30)],
-            "resonance_details": result.resonance_summary,
-        }
-
-        if getattr(args, "narrate", False):
-            output_dict["narrative"] = _simulate_narrate_text(result=result, wf_payload=None)
-
-        _json_output(output_dict)
-    else:
-        print(summary_text(result))
-        if getattr(args, "narrate", False):
-            _simulate_print_narrative(_simulate_narrate_text(result=result, wf_payload=None))
-
-
-# ==================== 主入口（独立运行示例） ====================
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Z哥量化工具 CLI 扩展命令",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  python -m modules.cli_commands backtest shaofu 600487.SH --days 250 --json
-  python -m modules.cli_commands backtest multi 600487.SH --days 120 --json
-  python -m modules.cli_commands backtest portfolio 600487.SH,601318.SH --days 120 --json
-  python -m modules.cli_commands trade add "4月25号买了100股茅台，1800块"
-  python -m modules.cli_commands trade list --json
-  python -m modules.cli_commands trade review --json
-  python -m modules.cli_commands trade stats --json
-  python -m modules.cli_commands daily --json
-  python -m modules.cli_commands simulate 600487.SH --days 250 --json
-        """,
-    )
-    subparsers = parser.add_subparsers(dest="command", help="子命令", required=True)
-
-    # ── backtest ──
-    p_bt = subparsers.add_parser("backtest", help="回测（shaofu / multi / portfolio）")
-    p_bt.add_argument("backtest_sub", choices=["shaofu", "multi", "portfolio"], help="回测类型")
-    p_bt.add_argument("ts_code", nargs="?", help="股票代码（shaofu/multi 必填）")
-    p_bt.add_argument("codes", nargs="?", help="股票代码列表（portfolio 用，逗号分隔）")
-    p_bt.add_argument("--days", type=int, default=250, help="回测天数")
-    p_bt.add_argument("--json", action="store_true", help="JSON 输出")
-    p_bt.add_argument("--strategy", default=None, help="策略过滤（暂保留）")
-
-    # ── trade ──
-    p_tr = subparsers.add_parser("trade", help="交易记录管理（add / list / review / stats）")
-    p_tr.add_argument("trade_sub", choices=["add", "list", "review", "stats"], help="操作")
-    p_tr.add_argument("text", nargs="?", help="交易描述（add 必填）")
-    p_tr.add_argument("--json", action="store_true", help="JSON 输出")
-    p_tr.add_argument("--limit", type=int, default=20, help="列出条数（list 用）")
-
-    # ── daily ──
-    p_dy = subparsers.add_parser("daily", help="每日工作流")
-    p_dy.add_argument("--json", action="store_true", help="JSON 输出")
-
-    # ── simulate ──
-    p_sim = subparsers.add_parser("simulate", help="端到端交易模拟回测（择时+选股+仓位+卖出）")
-    p_sim.add_argument("codes", nargs="?", help="股票代码，逗号分隔；省略则使用前 500 只")
-    p_sim.add_argument("--days", type=int, default=250, help="回测天数")
-    p_sim.add_argument("--capital", type=float, default=1_000_000, help="初始资金")
-    p_sim.add_argument("--max-positions", type=int, default=5, help="最大同时持仓")
-    p_sim.add_argument("--risk", type=float, default=0.02, help="单笔风险占净值比例")
-    p_sim.add_argument("--score", type=float, default=70.0, help="入选信号最低综合评分")
-    p_sim.add_argument("--signals", type=int, default=2, help="最小共振标签数")
-    p_sim.add_argument("--benchmark", type=str, default="000300.SH", help="基准指数代码")
-    p_sim.add_argument(
-        "--cost-model",
-        choices=["simple", "advanced"],
-        default="simple",
-        help="成本模型：simple=仅佣金，advanced=含印花税/过户费",
-    )
-    p_sim.add_argument("--slippage", choices=["fixed", "dynamic"], default="fixed", help="滑点模型")
-    p_sim.add_argument("--atr-sizing", action="store_true", help="启用 ATR 波动率仓位调整")
-    p_sim.add_argument("--max-position-pct", type=float, default=0.20, help="单票最大仓位占比")
-    p_sim.add_argument("--no-st", action="store_true", help="不允许交易 ST/*ST 股票")
-    p_sim.add_argument("--t1-lock", dest="t1_lock", action="store_true", default=True, help="启用 T+1 卖出锁定（默认）")
-    p_sim.add_argument("--no-t1-lock", dest="t1_lock", action="store_false", default=True, help="禁用 T+1 卖出锁定")
-    # v0.3 新增：战法共振模式参数
-    p_sim.add_argument("--strategy-mode", choices=["simple", "resonance"], default="simple", help="选股模式")
-    p_sim.add_argument("--strategy-lookback", type=int, default=5, help="战法信号回看交易日数")
-    p_sim.add_argument("--min-resonance-score", type=float, default=0.35, help="共振模式最低入选分")
-    p_sim.add_argument("--json", action="store_true", help="JSON 输出")
-
-    args = parser.parse_args()
-
-    # 调度
-    handlers = {
-        "backtest": cmd_backtest,
-        "trade": cmd_trade,
-        "daily": cmd_daily,
-        "simulate": cmd_simulate,
-    }
-    handlers[args.command](args)

@@ -25,7 +25,6 @@ import argparse
 import json
 import sys
 import os
-from pathlib import Path
 
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
@@ -525,139 +524,6 @@ def cmd_sync(args):
                 print(f"  {s['data_type']}: {s.get('last_date', 'N/A')} ({s.get('status', 'N/A')})")
 
 
-def cmd_self_optimize(args) -> int:
-    """self-optimize 子命令."""
-    from modules.self_optimizer import SelfOptimizer
-
-    opt = SelfOptimizer(
-        target=args.target,
-        rounds=args.rounds,
-        mode="dry_run",
-    )
-    if args.action == "run":
-        result = opt.run()
-        print(f"✓ Phase 3 done. {result['rounds']} rounds.")
-        print(f"  keep={result['keep']} revert={result['revert']} break={result['break']}")
-        print(f"  results.tsv: {result['results_tsv']}")
-        print(f"  drafts: {result['drafts_dir']}")
-        print("⚠️  请人工 review optimization_drafts/ 后决定合入")
-        return 0
-    if args.action == "status":
-        print(f"target={opt.target} rounds={opt.rounds} mode={opt.mode}")
-        return 0
-    if args.action == "reset":
-        state = Path("logs/self_optimizer_state.json")
-        if state.exists():
-            state.unlink()
-            print("✓ state.json 已删除")
-        return 0
-    print(f"Unknown action: {args.action}")
-    return 1
-
-
-def add_self_optimize_parser(subparsers) -> None:
-    """注册 self-optimize 子命令."""
-    p = subparsers.add_parser("self-optimize", help="darwin self-optimizer")
-    p.add_argument("action", choices=["run", "status", "reset"])
-    p.add_argument("--target", choices=["trading", "skill"], default="trading")
-    p.add_argument("--rounds", type=int, default=3)
-    p.set_defaults(func=cmd_self_optimize)
-
-
-def cmd_track(args):
-    """跟踪池管理（add / remove / list / info / status / stats）"""
-    from modules.tracking_manager import TrackingManager
-    import json
-
-    manager = TrackingManager()
-
-    action = args.track_action
-
-    if action == "add":
-        if not args.ts_code:
-            print("错误：添加股票需要指定股票代码")
-            return
-        success = manager.add_stock(
-            ts_code=args.ts_code, name=args.name, reason=args.reason, strategy_tags=args.strategy, notes=args.notes
-        )
-        if args.json:
-            print(json.dumps({"success": success}, ensure_ascii=False))
-
-    elif action == "remove":
-        if not args.ts_code:
-            print("错误：移除股票需要指定股票代码")
-            return
-        success = manager.remove_stock(ts_code=args.ts_code, reason=args.reason)
-        if args.json:
-            print(json.dumps({"success": success}, ensure_ascii=False))
-
-    elif action == "list":
-        stocks = manager.list_stocks(status=args.status, strategy_tag=args.strategy[0] if args.strategy else None)
-        if args.json:
-            print(json.dumps(stocks, ensure_ascii=False, indent=2))
-        else:
-            if not stocks:
-                print("跟踪池为空")
-                return
-            print(f"\n跟踪池（状态：{args.status}）")
-            print("-" * 80)
-            print(f"{'代码':<12} {'名称':<10} {'添加日期':<12} {'策略标签':<15} {'原因'}")
-            print("-" * 80)
-            for stock in stocks:
-                print(
-                    f"{stock['ts_code']:<12} {stock.get('name', '') or '':<10} {stock['add_date']:<12} {stock.get('strategy_tags', '') or '':<15} {stock.get('track_reason', '') or ''}"
-                )
-            print("-" * 80)
-            print(f"共 {len(stocks)} 只股票")
-
-    elif action == "info":
-        if not args.ts_code:
-            print("错误：查看股票信息需要指定股票代码")
-            return
-        stock = manager.get_stock_info(args.ts_code)
-        if args.json:
-            print(json.dumps(stock, ensure_ascii=False, indent=2) if stock else "{}")
-        else:
-            if not stock:
-                print(f"股票 {args.ts_code} 不在跟踪池中")
-                return
-            print(f"\n股票信息：{stock['ts_code']}")
-            print("-" * 40)
-            print(f"名称：{stock.get('name', '') or ''}")
-            print(f"状态：{stock['status']}")
-            print(f"添加日期：{stock['add_date']}")
-            print(f"移除日期：{stock.get('remove_date', '') or '未移除'}")
-            print(f"策略标签：{stock.get('strategy_tags', '') or ''}")
-            print(f"跟踪原因：{stock.get('track_reason', '') or ''}")
-            print(f"备注：{stock.get('notes', '') or ''}")
-
-    elif action == "status":
-        if not args.ts_code:
-            print("错误：更新状态需要指定股票代码")
-            return
-        success = manager.update_stock_status(ts_code=args.ts_code, status=args.status, notes=args.notes)
-        if args.json:
-            print(json.dumps({"success": success}, ensure_ascii=False))
-
-    elif action == "stats":
-        stats = manager.get_tracking_stats()
-        distribution = manager.get_strategy_distribution()
-        if args.json:
-            print(json.dumps({"stats": stats, "distribution": distribution}, ensure_ascii=False, indent=2))
-        else:
-            print("\n跟踪池统计")
-            print("-" * 40)
-            print(f"总数量：{stats.get('total', 0)}")
-            print(f"活跃：{stats.get('active', 0)}")
-            print(f"暂停：{stats.get('paused', 0)}")
-            print(f"已移除：{stats.get('removed', 0)}")
-            print(f"今日新增：{stats.get('today_added', 0)}")
-            if distribution:
-                print("\n策略分布：")
-                for strategy, count in sorted(distribution.items(), key=lambda x: x[1], reverse=True):
-                    print(f"  {strategy}: {count}只")
-
-
 def build_parser():
     """构建并返回 zt CLI 的 ArgumentParser（支持独立导入测试）"""
     parser = argparse.ArgumentParser(
@@ -673,16 +539,14 @@ def build_parser():
   zt diagnose 600487.SH
   zt watchlist add 600487.SH --tags 通信设备,5G
   zt watchlist scan
-  zt backtest shaofu 600487.SH --days 250
-  zt backtest multi 600487.SH --strategy b1,b2
+  zt backtest multi 600487.SH
   zt backtest portfolio 600487.SH,601318.SH
   zt trade add "4月25号买了100股茅台1800块"
   zt trade list
-  zt trade review
   zt daily
+  zt monitor
   zt sync init
   zt sync sync 600487.SH
-  zt simulate 600487.SH --days 250 --cost-model advanced --slippage dynamic
         """,
     )
 
@@ -744,28 +608,10 @@ def build_parser():
     p_sync_factor.add_argument("ts_code", nargs="?", help="股票代码（不传 = 全市场）")
     p_sync_factor.add_argument("--days", type=int, default=365, help="同步天数")
 
-    # ── track（自我改进系统 - 跟踪池管理）──
-    p_track = subparsers.add_parser("track", help="自我改进系统 - 跟踪池管理")
-    p_track.add_argument("track_action", choices=["add", "remove", "list", "info", "status", "stats"], help="操作")
-    p_track.add_argument("ts_code", nargs="?", help="股票代码")
-    p_track.add_argument("--reason", help="跟踪/移除原因")
-    p_track.add_argument("--strategy", nargs="+", help="策略标签（可多个）")
-    p_track.add_argument("--name", help="股票名称")
-    p_track.add_argument("--notes", help="备注")
-    p_track.add_argument("--status", choices=["active", "paused", "removed"], default="active", help="状态筛选")
-    p_track.add_argument("--json", action="store_true", help="JSON输出")
-    # ── self-optimize (darwin self-optimizer) ──
-    add_self_optimize_parser(subparsers)
-
-    # ── backtest（shaofu / multi / portfolio）──
+    # ── backtest（multi / portfolio）──
     # dest 字段名必须与 cli_commands.cmd_backtest 里 getattr(args, "backtest_sub", ...) 一致
     p_bt = subparsers.add_parser("backtest", help="策略回测")
     p_bt_sub = p_bt.add_subparsers(dest="backtest_sub", required=True)
-
-    p_bt_shaofu = p_bt_sub.add_parser("shaofu", help="少妇战法六步回测")
-    p_bt_shaofu.add_argument("ts_code", help="股票代码")
-    p_bt_shaofu.add_argument("--days", type=int, default=250, help="回测天数")
-    p_bt_shaofu.add_argument("--json", action="store_true", help="JSON输出")
 
     p_bt_multi = p_bt_sub.add_parser("multi", help="多策略融合回测")
     p_bt_multi.add_argument("ts_code", help="股票代码")
@@ -777,10 +623,9 @@ def build_parser():
     # 字段名 codes 与 cli_commands.cmd_backtest 中 getattr(args, "codes", ...) 对齐
     p_bt_portfolio.add_argument("codes", help="股票代码，逗号分隔")
     p_bt_portfolio.add_argument("--days", type=int, default=120, help="回测天数")
-    p_bt_portfolio.add_argument("--mode", choices=["shaofu", "multi"], default="shaofu", help="回测模式")
     p_bt_portfolio.add_argument("--json", action="store_true", help="JSON输出")
 
-    # ── trade（add / list / review / stats）──
+    # ── trade（add / list / stats）──
     # 改为 subparser 模式：dest="trade_sub" 与 cli_commands.cmd_trade 里 getattr(args, "trade_sub", ...) 对齐
     p_trade = subparsers.add_parser("trade", help="交易记录管理")
     p_trade_sub = p_trade.add_subparsers(dest="trade_sub", required=True)
@@ -793,9 +638,6 @@ def build_parser():
     p_trade_list = p_trade_sub.add_parser("list", help="列出最近交易记录")
     p_trade_list.add_argument("--limit", type=int, default=20, help="列出条数")
     p_trade_list.add_argument("--json", action="store_true", help="JSON输出")
-
-    p_trade_review = p_trade_sub.add_parser("review", help="构建复盘上下文（给 LLM）")
-    p_trade_review.add_argument("--json", action="store_true", help="JSON输出")
 
     p_trade_stats = p_trade_sub.add_parser("stats", help="交易统计摘要")
     p_trade_stats.add_argument("--json", action="store_true", help="JSON输出")
@@ -810,45 +652,6 @@ def build_parser():
     p_monitor.add_argument("--no-push", action="store_true", help="关闭推送通知")
     p_monitor.add_argument("--json", action="store_true", help="JSON输出")
 
-    # ── simulate（少女/少妇模拟器 v0.2）──
-    p_sim = subparsers.add_parser("simulate", help="端到端交易模拟回测（择时+选股+仓位+卖出）")
-    p_sim.add_argument("codes", nargs="?", help="股票代码，逗号分隔；省略则使用前 500 只")
-    p_sim.add_argument("--days", type=int, default=250, help="回测天数")
-    p_sim.add_argument("--capital", type=float, default=1_000_000, help="初始资金")
-    p_sim.add_argument("--max-positions", type=int, default=5, help="最大同时持仓")
-    p_sim.add_argument("--risk", type=float, default=0.02, help="单笔风险占净值比例")
-    p_sim.add_argument("--score", type=float, default=70.0, help="入选信号最低综合评分")
-    p_sim.add_argument("--signals", type=int, default=2, help="最小共振标签数")
-    p_sim.add_argument("--benchmark", type=str, default="000300.SH", help="基准指数代码")
-    p_sim.add_argument(
-        "--cost-model",
-        choices=["simple", "advanced"],
-        default="simple",
-        help="成本模型：simple=仅佣金，advanced=含印花税/过户费",
-    )
-    p_sim.add_argument("--slippage", choices=["fixed", "dynamic"], default="fixed", help="滑点模型")
-    p_sim.add_argument("--atr-sizing", action="store_true", help="启用 ATR 波动率仓位调整")
-    p_sim.add_argument("--max-position-pct", type=float, default=0.20, help="单票最大仓位占比")
-    p_sim.add_argument("--no-st", action="store_true", help="不允许交易 ST/*ST 股票")
-    p_sim.add_argument("--t1-lock", dest="t1_lock", action="store_true", default=True, help="启用 T+1 卖出锁定（默认）")
-    p_sim.add_argument("--no-t1-lock", dest="t1_lock", action="store_false", default=True, help="禁用 T+1 卖出锁定")
-    # v0.3 新增：战法共振模式参数
-    p_sim.add_argument("--strategy-mode", choices=["simple", "resonance"], default="simple", help="选股模式")
-    p_sim.add_argument("--strategy-lookback", type=int, default=5, help="战法信号回看交易日数")
-    p_sim.add_argument("--min-resonance-score", type=float, default=0.35, help="共振模式最低入选分")
-    p_sim.add_argument("--json", action="store_true", help="JSON输出")
-    p_sim.add_argument("--narrate", action="store_true", help="LLM 生成 Z哥风格点评")
-    # v0.4 新增：walk-forward 参数寻优
-    p_sim.add_argument("--walk-forward", action="store_true", help="启用 walk-forward 参数寻优")
-    p_sim.add_argument("--wf-train-days", type=int, default=120, help="训练窗口天数（默认 120）")
-    p_sim.add_argument("--wf-test-days", type=int, default=60, help="验证窗口天数（默认 60）")
-    p_sim.add_argument(
-        "--wf-objective",
-        choices=["calmar", "sharpe", "sortino", "total_return"],
-        default="calmar",
-        help="目标函数（默认 calmar）",
-    )
-
     return parser
 
 
@@ -858,7 +661,7 @@ def main():
     args = parser.parse_args()
 
     # 调度表
-    from modules.cli_commands import cmd_backtest, cmd_trade, cmd_daily, cmd_monitor, cmd_simulate
+    from modules.cli_commands import cmd_backtest, cmd_trade, cmd_daily, cmd_monitor
 
     handlers = {
         "analyze": cmd_analyze,
@@ -871,10 +674,7 @@ def main():
         "backtest": cmd_backtest,
         "trade": cmd_trade,
         "daily": cmd_daily,
-        "track": cmd_track,
-        "self-optimize": cmd_self_optimize,
         "monitor": cmd_monitor,
-        "simulate": cmd_simulate,
     }
     handlers[args.command](args)
 

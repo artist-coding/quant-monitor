@@ -1,10 +1,8 @@
 """
-P1-1 回归测试：DataSyncer 新方法 + modules/report + 4 个薄壳脚本
+P1-1 回归测试：DataSyncer 新方法 + 薄壳脚本
 
 - sync_missing(ts_codes) 返回 Dict[ts_code, int]
 - sync_daily_and_compute() 链式调用 sync_all_daily_kline + sync_all_indicators
-- report.assess_watchlist([]) 返回 []
-- report.render_assessment([]) 渲染空报告（含表头 + 元信息 + 0 指标）
 - 4 个薄壳脚本能 --help 退出 0
 """
 
@@ -62,61 +60,12 @@ def test_data_syncer_init_requires_token_in_jnb_mode():
     assert "raise ValueError" in src
 
 
-# ==================== modules/report 新模块 ====================
-
-
-def test_report_module_imports():
-    """modules/report 必须可 import"""
-    from modules import report
-
-    assert hasattr(report, "StockAssessment")
-    assert hasattr(report, "assess_watchlist")
-    assert hasattr(report, "render_assessment")
-    assert hasattr(report, "write_assessment")
-    assert hasattr(report, "MACRO_SECTORS")
-
-
-def test_assess_watchlist_empty_returns_empty_list():
-    """空 ts_codes 必须返回 []"""
-    from modules.report import assess_watchlist
-
-    assert assess_watchlist([]) == []
-
-
-def test_render_assessment_empty_report_has_header():
-    """空评估列表必须渲染出表头（即使没数据）"""
-    from modules.report import render_assessment
-
-    out = render_assessment([])
-    assert "Z哥量化评估报告" in out
-    assert "生成时间" in out
-    assert "股票总数: 0只" in out
-
-
-def test_render_assessment_contains_three_parts():
-    """报告必须包含 3 部分（个股深度 + 板块概览 + 操作建议）"""
-    from modules.report import render_assessment
-
-    out = render_assessment([])
-    assert "第一部分" in out
-    assert "第二部分" in out
-    assert "第三部分" in out
-
-
-def test_macro_sectors_has_at_least_ten_sectors():
-    """MACRO_SECTORS 必须覆盖 ≥10 个板块"""
-    from modules.report import MACRO_SECTORS
-
-    assert len(MACRO_SECTORS) >= 10
-
-
 # ==================== 4 个薄壳脚本 ====================
 
 SHELL_SCRIPTS = [
     "scripts/sync_watchlist.py",
     "scripts/sync_and_compute.py",
     "scripts/batch_compute_indicators.py",
-    "scripts/generate_report.py",
 ]
 
 
