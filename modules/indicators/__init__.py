@@ -14,6 +14,7 @@ from .core import (
     get_db_connection,
     calculate_ma,
     calculate_ema,
+    calculate_ema_series,
     calculate_sma_td,
     calculate_slope,
     calculate_kdj,
@@ -88,6 +89,7 @@ from .data_layer import (
     _load_indicator_cache,  # noqa: F401  re-export
     _save_indicator_cache,  # noqa: F401  re-export
     clear_indicator_memory_cache,
+    clear_analysis_memory_cache,
     get_kline_data,
     get_realtime_data,
     analyze_stock,
@@ -110,6 +112,7 @@ __all__ = [
     # core math
     "calculate_ma",
     "calculate_ema",
+    "calculate_ema_series",
     "calculate_sma_td",
     "calculate_slope",
     # core indicators
@@ -178,6 +181,7 @@ __all__ = [
     "detect_volume_attack",
     # data layer
     "clear_indicator_memory_cache",
+    "clear_analysis_memory_cache",
     "get_kline_data",
     "get_realtime_data",
     "analyze_stock",

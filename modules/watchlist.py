@@ -40,6 +40,24 @@ def _lookup_stock_name(ts_code: str) -> str:
     return str(row["name"] or "") if row else ""
 
 
+# 只有落在最近 N 根 K 线内的战法信号才值得当成"今天要处理的事"。
+# 用 K 线根数而不是自然日：停牌、长假都不会误伤。
+_SIGNAL_FRESH_BARS = 5
+
+
+def _recent_trade_dates(ts_code: str, bars: int = _SIGNAL_FRESH_BARS) -> set[str]:
+    """取该票最近 bars 个交易日的日期集合；库里没有 K 线时返回空集。"""
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT trade_date FROM daily_kline WHERE ts_code = ? ORDER BY trade_date DESC LIMIT ?",
+                (ts_code, bars),
+            ).fetchall()
+        return {str(r["trade_date"]) for r in rows}
+    except Exception:
+        return set()
+
+
 @dataclass
 class WatchAlert:
     """观察警报"""
@@ -103,6 +121,9 @@ def scan_watchlist(tags: str | None = None) -> dict[str, Any]:
         "exit_count": 0,
         "break_count": 0,
         "abnormal_count": 0,
+        # 被新鲜度闸门过滤掉的陈旧信号数：不进告警，但要让人看得见它存在
+        # （大量陈旧信号通常意味着该票的 K 线有断档，需要回补数据）
+        "stale_count": 0,
     }
 
     for w in watches:
@@ -123,40 +144,66 @@ def scan_watchlist(tags: str | None = None) -> dict[str, Any]:
             logger.warning(f"战法信号检测失败 {ts_code}: {e}")
             signals = []
 
-        # 1. B1/B2 信号提醒
-        for s in signals[:3]:
-            if s.strategy == StrategyType.B1 and s.action == "BUY":
+        # 信号新鲜度闸门：detect_all_strategies 返回的是整段历史里的信号，
+        # 一只 K 线有断档的票可能把几年前的信号排在最前面。把 2019 年的"逃顶"
+        # 当成 CRITICAL 推送出去，比不报还糟。
+        # 库里查不到 K 线时（测试环境 / 新票）返回空集，此时不设闸门，避免误杀全部信号。
+        fresh_dates = _recent_trade_dates(ts_code)
+        if fresh_dates:
+            fresh_signals = [s for s in signals if s.trade_date in fresh_dates]
+            stale_count = len(signals) - len(fresh_signals)
+            if stale_count:
+                summary["stale_count"] += stale_count
+                logger.debug("%s 过滤掉 %s 条超过 %s 根K线的陈旧信号", ts_code, stale_count, _SIGNAL_FRESH_BARS)
+            signals = fresh_signals
+
+        # 1. 买点信号提醒（B1/B2）：只取最近 3 条，避免刷屏
+        buy_signals = [s for s in signals if s.strategy in (StrategyType.B1, StrategyType.B2) and s.action == "BUY"]
+        for s in buy_signals[:3]:
+            if s.strategy == StrategyType.B1:
                 alerts.append(
                     WatchAlert(
                         ts_code=ts_code,
                         name=name,
                         alert_type="B1",
                         level="INFO",
-                        message=f"出现B1买点 J={s.details.get('j', 0):.1f}",
+                        message=f"{s.trade_date} 出现B1买点 J={s.details.get('j', 0):.1f}",
                         data={"signal": s},
                     )
                 )
                 summary["b1_count"] += 1
-            elif s.strategy == StrategyType.B2 and s.action == "BUY":
+            else:
                 alerts.append(
                     WatchAlert(
                         ts_code=ts_code,
                         name=name,
                         alert_type="B2",
                         level="INFO",
-                        message=f"出现B2确认 涨{s.details.get('pct_chg', 0):.1f}%",
+                        message=f"{s.trade_date} 出现B2确认 涨{s.details.get('pct_chg', 0):.1f}%",
                         data={"signal": s},
                     )
                 )
                 summary["b2_count"] += 1
-            elif s.strategy in (StrategyType.S1, StrategyType.S2, StrategyType.S3):
+
+        # 1b. 逃顶信号（S1/S2/S3）：CRITICAL 级别，全量扫描不截断
+        # detect_all_strategies 返回的是按日期倒序的最多 30 条混合信号，
+        # 逃顶信号完全可能排在第 4 条之后；漏报逃顶的代价远高于多报几条。
+        # 消息里必须带上信号日期：同一战法在不同交易日各触发一次是常态，
+        # 不带日期的话多条预警长得一模一样，看起来像重复刷屏。
+        seen_exits: set[tuple[str, str]] = set()
+        for s in signals:
+            if s.strategy in (StrategyType.S1, StrategyType.S2, StrategyType.S3):
+                key = (s.strategy.value, s.trade_date)
+                if key in seen_exits:
+                    continue
+                seen_exits.add(key)
                 alerts.append(
                     WatchAlert(
                         ts_code=ts_code,
                         name=name,
                         alert_type="EXIT",
                         level="CRITICAL",
-                        message=f"{s.strategy.value}逃顶信号",
+                        message=f"{s.trade_date} {s.strategy.value}逃顶信号",
                         data={"signal": s},
                     )
                 )
@@ -175,7 +222,8 @@ def scan_watchlist(tags: str | None = None) -> dict[str, Any]:
                 )
             )
             summary["break_count"] += 1
-        elif ind.bbi > 0 and hasattr(ind, "close") and ind.close < ind.bbi * 0.95:
+        # ind.close 为 0 说明 analyze_stock 无数据返回了空结果，此时不能判破位（0 < bbi*0.95 恒成立）
+        elif ind.bbi > 0 and ind.close > 0 and ind.close < ind.bbi * 0.95:
             alerts.append(
                 WatchAlert(
                     ts_code=ts_code,
@@ -188,16 +236,23 @@ def scan_watchlist(tags: str | None = None) -> dict[str, Any]:
             )
             summary["break_count"] += 1
 
-        # 3. 异动检测（量比 > 3 或涨跌幅 > 5%）
-        if ind.vol_ratio > 3 or (hasattr(ind, "pct_chg") and abs(ind.pct_chg) > 5):
+        # 3. 异动检测（量比 > 3 或涨跌幅 > 5%），message 区分触发原因
+        vol_abnormal = ind.vol_ratio > 3
+        pct_abnormal = abs(ind.pct_chg) > 5
+        if vol_abnormal or pct_abnormal:
+            reasons = []
+            if vol_abnormal:
+                reasons.append(f"量比{ind.vol_ratio:.1f}")
+            if pct_abnormal:
+                reasons.append(f"涨跌幅{ind.pct_chg:+.2f}%")
             alerts.append(
                 WatchAlert(
                     ts_code=ts_code,
                     name=name,
                     alert_type="ABNORMAL",
                     level="INFO",
-                    message=f"异动 量比{ind.vol_ratio:.1f}",
-                    data={"vol_ratio": ind.vol_ratio},
+                    message="异动 " + " ".join(reasons),
+                    data={"vol_ratio": ind.vol_ratio, "pct_chg": ind.pct_chg},
                 )
             )
             summary["abnormal_count"] += 1

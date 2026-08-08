@@ -1,12 +1,14 @@
 [Unit]
-Description=Run Quant Monitor daily sync after A-share close
+Description=Run Quant Monitor daily pipeline after A-share close
 
 [Timer]
 OnCalendar=Mon..Fri *-*-* 16:30:00 Asia/Shanghai
 AccuracySec=1min
 RandomizedDelaySec=60
+# 机器在 16:30 时未开机（关机/休眠）则开机后补跑一次，
+# 避免漏掉当天的收盘同步与评分。整条链幂等，补跑不会产生脏数据。
+Persistent=true
 Unit=quant-monitor-daily-sync.service
 
 [Install]
 WantedBy=timers.target
-

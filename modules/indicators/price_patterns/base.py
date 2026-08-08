@@ -1,21 +1,29 @@
-from ..core import DailyData, calculate_ma, calculate_ema
+from ..core import DailyData, calculate_ma, calculate_ema, calculate_ema_series
 
 
 def calculate_zg_white(klines: list[DailyData]) -> float:
     """
     计算 Z哥白线 = EMA(EMA(C,10),10)
 
-    双重平滑后的短期动能线
+    双重平滑后的短期动能线：
+    1. 先对收盘价算出 EMA(C,10) 的**完整序列**；
+    2. 再对这条序列整体做一次 EMA(...,10)，取最后一个值。
+
+    初值约定沿用 core.calculate_ema（首值起手，k = 2/11），
+    两次平滑口径一致，不做 SMA 预热。
+
+    最小长度门槛统一为 10 根 K 线（与第一层 EMA 的周期一致）：
+    不足 10 根返回 0。历史实现里 len<19 时直接返回单次 EMA 的分支已废弃
+    ——那是 bug（第二次 EMA 被错误地重算在最后 10 根原始收盘价上），
+    修复后 10 根起就是真正的双重平滑，数值会与旧版本不同。
     """
     if len(klines) < 10:
         return 0
     closes = [k.close for k in klines]
-    ema1 = calculate_ema(closes, 10)
-    # 再次平滑：用前10天数据计算第二次EMA
-    if len(klines) < 19:
-        return ema1
-    recent_10 = closes[-10:]
-    ema2 = calculate_ema(recent_10, 10)
+    ema1_series = calculate_ema_series(closes, 10)
+    if not ema1_series:
+        return 0
+    ema2 = calculate_ema(ema1_series, 10)
     return round(ema2, 2)
 
 

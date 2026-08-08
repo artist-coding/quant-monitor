@@ -32,6 +32,32 @@ _LIMIT_THRESHOLD = 9.9
 TUSHARE_API_URL = os.environ.get("TUSHARE_API_URL", "")
 VERIFY_TOKEN_URL = os.environ.get("TUSHARE_VERIFY_TOKEN_URL", "")
 
+# 默认同步的宽基指数列表（作为大盘环境的补充信息）
+#
+# **只放 3 个是被配额逼的**：实测该中转源 index_daily 限额 5 次/天
+# （错误文案原文「频率超限(5次/天)」）。原来一次要 7 个指数，第 6 个起必然失败；
+# 叠加旧的 3 次重试后，一轮就能打出 21 次请求，当天配额瞬间烧光——这正是
+# index_daily 表长期一行都没有的真正原因，而不是接口不可用。
+# 留 2 次余量给手动补数和失败重跑。
+#
+# 注意：大盘环境的**首选**数据源是全市场宽度（daily_pipeline.compute_market_breadth，
+# 从 daily_kline 算，零 API 成本），指数只是补充。想加指数前先确认配额够用。
+DEFAULT_INDEXES: list[str] = [
+    "000300.SH",  # 沪深300：覆盖大盘蓝筹，代表性最强
+    "000001.SH",  # 上证指数：最常被引用的大盘口径
+    "399006.SZ",  # 创业板指：成长股情绪，与沪深300 形成风格对照
+]
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """判断异常是否为 Tushare 的接口配额超限。
+
+    中转 API 把限流以普通异常抛出，文案形如
+    「抱歉，您访问接口(index_daily)频率超限(5次/天)」。
+    """
+    text = str(exc)
+    return "频率超限" in text or "rate limit" in text.lower()
+
 
 def _normalize_trade_date(trade_date: str | None) -> str:
     """校验并规范化 YYYYMMDD 交易日期。"""
@@ -86,13 +112,23 @@ class DataSyncer:
         self.last_request_time[api_name] = time.time()
 
     def _call_api_with_retry(self, api_name: str, func, *args, **kwargs):
-        """带退避算法和限流控制的 API 调用封装"""
+        """带退避算法和限流控制的 API 调用封装。
+
+        **限流错误不重试**：Tushare 的配额是按接口分别计的，且颗粒度很粗
+        （实测 index_daily 5 次/天、stock_basic 1 次/小时、trade_cal 1 次/分钟）。
+        原来的 1s/2s 退避远小于任何一个窗口，重试必然再次失败，却要多消耗
+        2 次配额——7 个指数 × 3 次重试 = 21 次请求打一个 5 次/天的额度，
+        等于自己把配额烧光。碰到限流直接抛出，交给下一次定时运行。
+        """
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 self._rate_limit(api_name)
                 return func(*args, **kwargs)
             except Exception as e:
+                if _is_rate_limit_error(e):
+                    logger.warning("[%s] 触发接口配额限制，不重试（等下次调度）: %s", api_name, e)
+                    raise
                 if attempt == max_retries - 1:
                     raise e
                 sleep_time = 2**attempt
@@ -247,6 +283,115 @@ class DataSyncer:
             self._log_sync("stock_basic", None, "", "failed", str(e))
             return 0
 
+    # ==================== 交易日历 ====================
+
+    def sync_trade_cal(self, start_date: str, end_date: str, exchange: str = "SSE") -> int:
+        """同步一段区间的交易日历到本地 trade_cal 表。
+
+        Tushare 的 trade_cal 接口被限流到 1 次/分钟，因此建议调用方按"整年"
+        为粒度拉取，尽量减少 API 调用次数。入库使用 INSERT OR REPLACE，重复
+        执行幂等。
+
+        Args:
+            start_date: 起始日期 YYYYMMDD
+            end_date: 结束日期 YYYYMMDD
+            exchange: 交易所代码，默认 SSE（上交所）
+
+        Returns:
+            入库行数；失败返回 0
+        """
+        init_database(verbose=False)
+        try:
+            df = self._call_api_with_retry(
+                "trade_cal",
+                self._fetcher.fetch_trade_cal,
+                exchange,
+                start_date,
+                end_date,
+            )
+            if df is None or len(df) == 0:
+                logger.warning("交易日历为空: %s %s~%s", exchange, start_date, end_date)
+                self._log_sync("trade_cal", None, end_date, "failed", "交易日历返回空")
+                return 0
+
+            records = []
+            for row in df.itertuples(index=False):
+                row_dict = row._asdict()
+                cal_date = str(row_dict.get("cal_date", "") or "")
+                if not cal_date:
+                    continue
+                records.append(
+                    (
+                        str(row_dict.get("exchange", "") or exchange),
+                        cal_date,
+                        int(row_dict.get("is_open", 0) or 0),
+                        row_dict.get("pretrade_date"),
+                    )
+                )
+
+            if not records:
+                self._log_sync("trade_cal", None, end_date, "failed", "交易日历无有效行")
+                return 0
+
+            with get_connection() as conn:
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO trade_cal (exchange, cal_date, is_open, pretrade_date)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    records,
+                )
+
+            self._log_sync("trade_cal", None, end_date, "success", f"rows={len(records)}, exchange={exchange}")
+            logger.info("交易日历同步完成: %s %s~%s, %s 条", exchange, start_date, end_date, len(records))
+            return len(records)
+
+        except Exception as e:
+            logger.error("交易日历同步失败 %s %s~%s: %s", exchange, start_date, end_date, e)
+            self._log_sync("trade_cal", None, "", "failed", str(e)[:500])
+            return 0
+
+    def _query_trade_cal(self, trade_date: str, exchange: str) -> bool | None:
+        """从本地 trade_cal 表查询某日是否为交易日；未命中返回 None。"""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT is_open FROM trade_cal WHERE exchange = ? AND cal_date = ?",
+                (exchange, trade_date),
+            ).fetchone()
+        if row is None:
+            return None
+        return bool(row[0])
+
+    def is_trade_day(self, trade_date: str, exchange: str = "SSE") -> bool | None:
+        """判断某日是否为交易日。
+
+        查询顺序：本地 trade_cal 缓存 → 拉取该日期所在自然年的整年日历后再查。
+        若 API 限流或异常导致仍拿不到结果，返回 None 表示"未知"，**不抛异常**，
+        由调用方自行决定降级策略。
+
+        Args:
+            trade_date: 日期 YYYYMMDD
+            exchange: 交易所代码，默认 SSE
+
+        Returns:
+            True=交易日 / False=非交易日 / None=未知
+        """
+        target = _normalize_trade_date(trade_date)
+        init_database(verbose=False)
+
+        cached = self._query_trade_cal(target, exchange)
+        if cached is not None:
+            return cached
+
+        # 未命中：一次性补全该自然年的整年日历，减少限流接口的调用次数
+        year = target[:4]
+        self.sync_trade_cal(f"{year}0101", f"{year}1231", exchange)
+
+        cached = self._query_trade_cal(target, exchange)
+        if cached is None:
+            logger.warning("交易日历不可用，无法判断 %s 是否为交易日（exchange=%s）", target, exchange)
+        return cached
+
     # ==================== 收盘后全市场日线 ====================
 
     def sync_market_daily(
@@ -276,20 +421,15 @@ class DataSyncer:
 
         try:
             if check_trade_calendar:
-                calendar = self._call_api_with_retry(
-                    "trade_cal",
-                    self._fetcher.fetch_trade_cal,
-                    "SSE",
-                    target,
-                    target,
-                )
-                if calendar is None or calendar.empty:
-                    raise RuntimeError(f"交易日历未返回 {target} 的数据")
-                is_open = any(int(value) == 1 for value in calendar["is_open"].tolist())
-                if not is_open:
+                is_open = self.is_trade_day(target)
+                if is_open is False:
                     result.update(status="skipped", message="非交易日，无需同步")
                     self._log_sync("market_daily_raw", None, target, "skipped", result["message"])
                     return result
+                if is_open is None:
+                    # 交易日历不可用（多为接口限流）时不硬失败：继续同步，
+                    # 由后续 daily 接口的空结果自然兜底，避免整条流水线中断。
+                    logger.warning("交易日历不可用，跳过 %s 的交易日校验，继续尝试同步", target)
 
             if refresh_stock_basic:
                 result["stock_basic_rows"] = self.sync_stock_basic()
@@ -518,6 +658,117 @@ class DataSyncer:
             return self.sync_daily_kline(code, start_date, end_date)
 
         return self._batch_sync("日线数据", _sync_one, ts_codes)
+
+    # ==================== 指数日线 ====================
+
+    def sync_index_daily(self, ts_code: str, start_date: str | None = None, end_date: str | None = None) -> int:
+        """同步单个指数的日线行情（增量更新）。
+
+        Args:
+            ts_code: 指数代码，如 '000001.SH'
+            start_date: 起始日期 YYYYMMDD；None 表示从 sync_log 记录的最后成功
+                日期次日开始，无记录则默认回看 730 天
+            end_date: 结束日期 YYYYMMDD；None 表示今天
+
+        Returns:
+            入库条数；失败返回 0
+        """
+        init_database(verbose=False)
+
+        # 增量更新：接着上次成功同步的日期往后拉
+        if start_date is None:
+            last_date = self._get_last_date("index_daily", ts_code)
+            if last_date:
+                last_dt = datetime.strptime(last_date, "%Y%m%d")
+                start_date = (last_dt + timedelta(days=1)).strftime("%Y%m%d")
+
+        if start_date is None:
+            start_date = (datetime.now() - timedelta(days=730)).strftime("%Y%m%d")
+        if end_date is None:
+            end_date = datetime.now().strftime("%Y%m%d")
+
+        try:
+            df = self._call_api_with_retry(
+                "index_daily",
+                self._fetcher.fetch_index_daily,
+                ts_code,
+                start_date,
+                end_date,
+            )
+
+            if df is None or len(df) == 0:
+                # 空结果有两种成因：该区间真的没有行情，或接口限流被静默吞掉。
+                # 必须落一条 sync_log，否则 index_daily 一直是 0 行却查不到任何失败记录。
+                self._log_sync("index_daily", ts_code, "", "failed", f"接口返回空（{start_date}~{end_date}），疑似限流")
+                logger.warning("指数日线返回空: %s %s~%s（疑似接口限流）", ts_code, start_date, end_date)
+                return 0
+
+            records = []
+            for row in df.itertuples(index=False):
+                row_dict = row._asdict()
+                records.append(
+                    (
+                        str(row_dict.get("ts_code", "") or ts_code),
+                        str(row_dict.get("trade_date", "") or ""),
+                        row_dict.get("open"),
+                        row_dict.get("high"),
+                        row_dict.get("low"),
+                        row_dict.get("close"),
+                        row_dict.get("pre_close"),
+                        row_dict.get("change"),
+                        row_dict.get("pct_chg"),
+                        row_dict.get("vol"),
+                        row_dict.get("amount"),
+                    )
+                )
+
+            with get_connection() as conn:
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO index_daily
+                    (ts_code, trade_date, open, high, low, close,
+                     pre_close, change, pct_chg, vol, amount)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    records,
+                )
+
+            latest_date = max(rec[1] for rec in records)
+            self._log_sync("index_daily", ts_code, latest_date, "success", f"rows={len(records)}")
+            logger.info("指数日线同步完成: %s, %s 条, %s-%s", ts_code, len(records), start_date, latest_date)
+            return len(records)
+
+        except Exception as e:
+            logger.error("指数日线同步失败 %s: %s", ts_code, e)
+            self._log_sync("index_daily", ts_code, "", "failed", str(e)[:500])
+            return 0
+
+    def sync_all_index_daily(
+        self,
+        ts_codes: list[str] | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, int]:
+        """批量同步指数日线；ts_codes 默认为 DEFAULT_INDEXES。
+
+        **刻意串行，不走 _batch_sync 的 5 线程并发**：index_daily 是强限流接口
+        （实测该中转源上 65 秒间隔逐个请求仍大量返回空），而 _rate_limit 只有
+        全局 180 rpm 的桶、没有 per-endpoint 概念，5 个并发请求会瞬间打满这个
+        接口自己的配额，结果是一条都拿不到。指数只有 7 个，串行的代价可以忽略。
+        """
+        if ts_codes is None:
+            ts_codes = list(DEFAULT_INDEXES)
+
+        results: dict[str, int] = {}
+        for code in ts_codes:
+            try:
+                results[code] = self.sync_index_daily(code, start_date, end_date)
+            except Exception as exc:
+                logger.error("指数日线同步失败 %s: %s", code, exc)
+                results[code] = 0
+        success = sum(1 for v in results.values() if v > 0)
+        logger.info("指数日线批量同步完成，成功 %s/%s", success, len(ts_codes))
+        return results
 
     # ==================== 指标缓存 ====================
 

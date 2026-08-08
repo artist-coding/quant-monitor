@@ -172,11 +172,15 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
         yellow_line = []
         for i in range(len(all_klines) - days, len(all_klines)):
             try:
-                white_val = calculate_zg_white(all_klines, i)
-                yellow_val = calculate_dg_yellow(all_klines, i)
+                # 两个函数都只接受 klines 一个参数，靠切片表达"截至第 i 根"。
+                # 曾经这里传的是 (all_klines, i)，每轮都抛 TypeError 被下面的
+                # except 吞掉，导致 K 线图的白/黄线 overlay 恒为空。
+                white_val = calculate_zg_white(all_klines[: i + 1])
+                yellow_val = calculate_dg_yellow(all_klines[: i + 1])
                 white_line.append(round(white_val, 2) if white_val else None)
                 yellow_line.append(round(yellow_val, 2) if yellow_val else None)
             except Exception:
+                logger.debug("白线/黄线单点计算失败 %s idx=%s", ts_code, i, exc_info=True)
                 white_line.append(None)
                 yellow_line.append(None)
         overlays["white_line"] = white_line

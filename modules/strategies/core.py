@@ -183,33 +183,75 @@ def get_kline_data(ts_code: str, days: int = 120) -> list[dict]:
     return data_list
 
 
+# MDC 多维验证字段分两类处理，语义不同：
+# - 指标类（布林/RSI/DMI）：0 是无意义的"假值"，必须还原为 None（无数据）
+# - 资金流类：下游存在裸算术（如 large_inflow - large_outflow），None 会直接 TypeError，
+#   故保持 0 语义（"无净流入/流出" 与 "无数据" 在下游行为一致）
+_MDC_INDICATOR_FIELDS = ("boll_upper", "boll_mid", "boll_lower", "rsi6", "adx", "dmi_plus", "dmi_minus")
+_MDC_FLOW_FIELDS = ("net_mf", "large_inflow", "large_outflow")
+
+
+def _mdc_num(value: Any) -> float | None:
+    """MDC 指标字段归一化：None / 非数值 / 0 一律视为"无数据"，返回 None。
+
+    get_kline_data 对 LEFT JOIN 出来的 NULL 做了 ``or 0`` 的 fallback，
+    但 ``boll_lower=0`` 这种"假价格"一旦被当作有效值参与
+    ``today.close <= boll_lower * 1.02`` 之类的比较就会得出完全错误的结论，
+    因此这里统一还原成 None，让下游的 ``if boll_lower and ...`` 真值判断跳过加分。
+    """
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return num if num != 0 else None
+
+
+def _mdc_flow(value: Any) -> float:
+    """MDC 资金流字段归一化：无数据 / 非数值一律返回 0。"""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _dict_to_daily(klines: list[dict]) -> list[DailyData]:
-    """将 Dict K 线列表转换为 indicators.DailyData，完整映射形态特征属性"""
+    """将 Dict K 线列表转换为 indicators.DailyData，完整映射形态特征与 MDC 多维验证属性"""
     from ..indicators import DailyData
 
     result = []
     for i, k in enumerate(klines):
         prev_close = klines[i - 1]["close"] if i > 0 else k["close"]
-        result.append(
-            DailyData(
-                ts_code=k["ts_code"],
-                trade_date=k["trade_date"],
-                open=k["open"],
-                high=k["high"],
-                low=k["low"],
-                close=k["close"],
-                vol=k["vol"],
-                amount=k.get("amount", k["close"] * k["vol"]),
-                pct_chg=k.get("pct_chg", 0),
-                prev_close=prev_close,
-                is_rise=k.get("is_rise", False),
-                is_beidou=k.get("is_beidou", False),
-                is_suoliang=k.get("is_suoliang", False),
-                is_jiayin=k.get("is_jiayin", False),
-                is_yinxian=k.get("is_yinxian", False),
-                is_fangliang_yinxian=k.get("is_fangliang_yinxian", False),
-            )
+        daily = DailyData(
+            ts_code=k["ts_code"],
+            trade_date=k["trade_date"],
+            open=k["open"],
+            high=k["high"],
+            low=k["low"],
+            close=k["close"],
+            vol=k["vol"],
+            amount=k.get("amount", k["close"] * k["vol"]),
+            pct_chg=k.get("pct_chg", 0),
+            prev_close=prev_close,
+            is_rise=k.get("is_rise", False),
+            is_beidou=k.get("is_beidou", False),
+            is_suoliang=k.get("is_suoliang", False),
+            is_jiayin=k.get("is_jiayin", False),
+            is_yinxian=k.get("is_yinxian", False),
+            is_fangliang_yinxian=k.get("is_fangliang_yinxian", False),
         )
+        # MDC 多维验证字段（布林/RSI/ADX/DMI/资金流）。
+        # 用 setattr 而非构造函数关键字参数，是为了兼容 DailyData 尚未声明这些字段的情况；
+        # 待 indicators 层按契约补上声明后，本处行为完全不变。
+        # 传进来的 dict 可能根本没有这些键（如测试 fixture 造的裸 K 线），故一律用 k.get 容错。
+        for name in _MDC_INDICATOR_FIELDS:
+            setattr(daily, name, _mdc_num(k.get(name)))
+        for name in _MDC_FLOW_FIELDS:
+            setattr(daily, name, _mdc_flow(k.get(name)))
+        result.append(daily)
     return result
 
 

@@ -69,6 +69,24 @@ class DailyData:
     macd_dea: float | None = None
     macd_hist: float | None = None
 
+    # MDC 多维验证字段（来自 indicator_cache / moneyflow 联表，由 strategies.core._dict_to_daily 填充）
+    #
+    # 指标类默认 None 而非 0：策略里写的是 `if boll_lower and ...`，
+    # 0 会被当成"有数据"参与 `close <= boll_lower * 1.02` 的比较并得出错误结论。
+    boll_upper: float | None = None
+    boll_mid: float | None = None
+    boll_lower: float | None = None
+    rsi6: float | None = None
+    adx: float | None = None
+    dmi_plus: float | None = None
+    dmi_minus: float | None = None
+    # 资金流类必须默认 0 而非 None：下游有裸算术 `large_outflow - large_inflow`
+    # (base_strategies.py / sell_signals.py)，且取值用的是 getattr(today, "x", 0)
+    # ——字段一旦存在且为 None，getattr 返回的是 None 而不是默认值 0，直接 TypeError。
+    net_mf: float = 0
+    large_inflow: float = 0
+    large_outflow: float = 0
+
     def __getitem__(self, key: str) -> Any:
         try:
             return getattr(self, key)
@@ -85,6 +103,10 @@ class IndicatorResult:
 
     ts_code: str
     trade_date: str
+
+    # 当日行情快照（来自 klines[-1]，供 watchlist 破位/异动预警等下游直接消费）
+    close: float = 0  # 当日收盘价
+    pct_chg: float = 0  # 当日涨跌幅 %
 
     # KDJ
     k: float = 0
@@ -285,6 +307,35 @@ def calculate_ema(prices: list[float], period: int) -> float:
         ema = price * k + ema * (1 - k)
 
     return ema
+
+
+def calculate_ema_series(prices: list[float], period: int) -> list[float]:
+    """
+    计算指数移动平均的完整序列（返回每个点的 EMA 值）
+
+    初值约定与 calculate_ema 完全一致：EMA[0] = prices[0]（首值起手，
+    不做 SMA 预热），随后 EMA[i] = prices[i] * k + EMA[i-1] * (1-k)，k = 2/(period+1)。
+    因此当 len(prices) >= period 时，calculate_ema_series(...)[-1] == calculate_ema(...)。
+
+    Args:
+        prices: 价格序列
+        period: EMA 周期
+
+    Returns:
+        与输入等长的 EMA 序列；数据不足 period 时返回空列表（对齐 calculate_ema 的 0 语义）
+    """
+    if len(prices) < period:
+        return []
+
+    k = 2 / (period + 1)
+    ema = prices[0]
+    result = [ema]
+
+    for price in prices[1:]:
+        ema = price * k + ema * (1 - k)
+        result.append(ema)
+
+    return result
 
 
 def calculate_sma_td(values: list[float], period: int, m: int) -> float:

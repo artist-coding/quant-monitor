@@ -11,8 +11,11 @@
     python -m modules.cli sync init
     python -m modules.cli sync sync 600487.SH
     python -m modules.cli sync market-daily
+    python -m modules.cli sync trade-cal --start 20260101 --end 20261231
+    python -m modules.cli sync index --ts-code 000300.SH
     python -m modules.cli sync status
     python -m modules.cli sync stk-factor 600487.SH
+    python -m modules.cli daily-run --json
 
 设计：所有命令通过 `zt` entry point（已在 pyproject.toml 注册）暴露。
 本文件取代 v2.9.0 散落在 5 个模块的独立 main()（screener / data_sync /
@@ -443,7 +446,7 @@ def cmd_diagnose(args):
 
 
 def cmd_sync(args):
-    """数据同步（init / sync / market-daily / status / stk-factor）"""
+    """数据同步（init / sync / market-daily / trade-cal / index / status / stk-factor）"""
     import logging
     from datetime import datetime, timedelta
     from modules.data_sync import DataSyncer
@@ -509,6 +512,52 @@ def cmd_sync(args):
         if result["status"] == "failed":
             raise SystemExit(1)
 
+    elif action == "trade-cal":
+        # 注意：Tushare trade_cal 接口被限流到 1 次/分钟，建议按整年拉取
+        syncer = DataSyncer(datasource=get_datasource("tushare"))
+        year = datetime.now().strftime("%Y")
+        start_date = args.start or f"{year}0101"
+        end_date = args.end or f"{year}1231"
+        rows = syncer.sync_trade_cal(start_date, end_date, exchange=args.exchange)
+        result = {
+            "status": "success" if rows else "failed",
+            "exchange": args.exchange,
+            "start_date": start_date,
+            "end_date": end_date,
+            "rows": rows,
+        }
+        if args.json:
+            _json_output(result)
+        else:
+            status_icon = "✓" if rows else "✗"
+            print(f"{status_icon} 交易日历同步 {args.exchange} {start_date}~{end_date}: {rows} 条")
+        if not rows:
+            raise SystemExit(1)
+
+    elif action == "index":
+        syncer = DataSyncer(datasource=get_datasource("tushare"))
+        if args.ts_code:
+            rows = syncer.sync_index_daily(args.ts_code, start_date=args.start, end_date=args.end)
+            per_index = {args.ts_code: rows}
+        else:
+            per_index = syncer.sync_all_index_daily(start_date=args.start, end_date=args.end)
+        total = sum(int(v or 0) for v in per_index.values())
+        # rows=0 表示"已是最新"，属正常情况，不视为失败
+        result = {
+            "status": "success",
+            "total_rows": total,
+            "index_count": len(per_index),
+            "per_index": per_index,
+        }
+        if args.json:
+            _json_output(result)
+        else:
+            print(f"✓ 指数日线同步完成，{len(per_index)} 个指数，共 {total} 条")
+            for code, count in per_index.items():
+                print(f"  {code:<12} {count} 条")
+            if total == 0:
+                print("  提示：0 条既可能是本地已最新，也可能是接口限流全部失败，请看上方日志")
+
     elif action == "status":
         # 状态查询只读本地数据库，不应因 Tushare 配置缺失而失败。
         syncer = DataSyncer(datasource=get_datasource("sqlite"))
@@ -522,6 +571,31 @@ def cmd_sync(args):
             print("同步状态:")
             for s in status["sync_status"]:
                 print(f"  {s['data_type']}: {s.get('last_date', 'N/A')} ({s.get('status', 'N/A')})")
+
+
+def cmd_daily_run(args):
+    """每日收盘后全流程编排（同步 → 刷指标 → 评分落库）"""
+    import logging
+    from modules.daily_pipeline import format_pipeline_summary, run_daily_pipeline
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+    result = run_daily_pipeline(
+        trade_date=args.date,
+        skip_market=args.skip_market,
+        skip_index=args.skip_index,
+        skip_indicators=args.skip_indicators,
+        skip_scores=args.skip_scores,
+        watchlist_days=args.watchlist_days,
+    )
+
+    if args.json:
+        _json_output(result)
+    else:
+        print(format_pipeline_summary(result))
+
+    if result["status"] == "failed":
+        raise SystemExit(1)
 
 
 def build_parser():
@@ -547,6 +621,10 @@ def build_parser():
   zt monitor
   zt sync init
   zt sync sync 600487.SH
+  zt sync trade-cal --start 20260101 --end 20261231
+  zt sync index --ts-code 000300.SH
+  zt daily-run
+  zt daily-run --date 20260807 --json
         """,
     )
 
@@ -603,6 +681,16 @@ def build_parser():
     p_sync_market.add_argument("--no-refresh-stock-basic", action="store_true", help="不刷新上市股票基本信息")
     p_sync_market.add_argument("--skip-calendar-check", action="store_true", help="跳过交易日历检查（仅排障使用）")
     p_sync_market.add_argument("--json", action="store_true", help="JSON 输出")
+    p_sync_cal = p_sync_sub.add_parser("trade-cal", help="同步交易日历（接口限流 1 次/分钟，建议按整年拉）")
+    p_sync_cal.add_argument("--start", help="起始日期 YYYYMMDD，默认今年 0101")
+    p_sync_cal.add_argument("--end", help="结束日期 YYYYMMDD，默认今年 1231")
+    p_sync_cal.add_argument("--exchange", default="SSE", help="交易所代码，默认 SSE")
+    p_sync_cal.add_argument("--json", action="store_true", help="JSON 输出")
+    p_sync_index = p_sync_sub.add_parser("index", help="同步宽基指数日线（默认 7 个指数）")
+    p_sync_index.add_argument("--ts-code", dest="ts_code", help="指数代码，如 000300.SH（不传 = 全部默认指数）")
+    p_sync_index.add_argument("--start", help="起始日期 YYYYMMDD，默认增量续传")
+    p_sync_index.add_argument("--end", help="结束日期 YYYYMMDD，默认今天")
+    p_sync_index.add_argument("--json", action="store_true", help="JSON 输出")
     p_sync_sub.add_parser("status", help="查看同步状态")
     p_sync_factor = p_sync_sub.add_parser("stk-factor", help="同步 Tushare 官方指标（diff 验证用）")
     p_sync_factor.add_argument("ts_code", nargs="?", help="股票代码（不传 = 全市场）")
@@ -646,6 +734,18 @@ def build_parser():
     p_daily = subparsers.add_parser("daily", help="每日五步工作流")
     p_daily.add_argument("--json", action="store_true", help="JSON输出")
 
+    # ── daily-run（每日收盘后全流程编排）──
+    p_daily_run = subparsers.add_parser("daily-run", help="每日收盘后全流程：同步 → 刷指标 → 评分落库")
+    p_daily_run.add_argument("--date", help="交易日期 YYYYMMDD，默认今天")
+    p_daily_run.add_argument("--json", action="store_true", help="JSON输出")
+    p_daily_run.add_argument("--skip-market", action="store_true", help="跳过全市场日线同步")
+    p_daily_run.add_argument("--skip-index", action="store_true", help="跳过宽基指数日线同步")
+    p_daily_run.add_argument("--skip-indicators", action="store_true", help="跳过票池 K 线补齐与指标缓存重算")
+    p_daily_run.add_argument("--skip-scores", action="store_true", help="跳过票池评分落库")
+    p_daily_run.add_argument(
+        "--watchlist-days", type=int, default=250, help="票池指标缓存回溯天数（双线战法需 ≥115，默认 250）"
+    )
+
     # ── monitor ──
     p_monitor = subparsers.add_parser("monitor", help="自选股主动预警与扫描推送")
     p_monitor.add_argument("--days", type=int, default=30, help="同步 K 线回溯天数")
@@ -671,6 +771,7 @@ def main():
         "diagnose": cmd_diagnose,
         "watchlist": cmd_watchlist,
         "sync": cmd_sync,
+        "daily-run": cmd_daily_run,
         "backtest": cmd_backtest,
         "trade": cmd_trade,
         "daily": cmd_daily,

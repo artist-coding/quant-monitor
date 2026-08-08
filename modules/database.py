@@ -608,7 +608,61 @@ def init_database(verbose: bool = True) -> None:
             ON llm_response_log(model, request_date DESC)
         """)
 
-        # 12. 自我改进系统跟踪表（tracking_tables.sql）
+        # 12. 交易日历本地缓存表
+        # Tushare trade_cal 接口限流严重（1 次/分钟），本地缓存后避免每日同步反复请求
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trade_cal (
+                exchange TEXT NOT NULL,          -- 交易所代码（SSE/SZSE 等）
+                cal_date TEXT NOT NULL,          -- 日历日期 YYYYMMDD
+                is_open INTEGER NOT NULL,        -- 1=交易日，0=休市
+                pretrade_date TEXT,              -- 上一交易日
+                PRIMARY KEY (exchange, cal_date)
+            )
+        """)
+
+        # 13. 指数日线行情表（大盘环境判断用）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS index_daily (
+                ts_code TEXT NOT NULL,           -- 指数代码，如 000001.SH
+                trade_date TEXT NOT NULL,        -- 交易日期 YYYYMMDD
+                open REAL, high REAL, low REAL, close REAL,
+                pre_close REAL, change REAL, pct_chg REAL,
+                vol REAL, amount REAL,
+                PRIMARY KEY (ts_code, trade_date)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_index_daily_date
+            ON index_daily(trade_date DESC)
+        """)
+
+        # 14. 每日综合评分表（票池逐票评分结果落库）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_scores (
+                ts_code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                name TEXT,
+                score REAL,                      -- 综合总分
+                b1_score REAL,                   -- B1 买点得分
+                trend_score REAL,                -- 趋势得分
+                volume_score REAL,               -- 量能得分
+                risk_score REAL,                 -- 风险扣分
+                rating TEXT,                     -- 评级标签
+                market_dir TEXT,                 -- 大盘方向
+                market_pct_chg REAL,             -- 大盘涨跌幅
+                market_strength REAL,            -- 大盘强度
+                reasons TEXT,                    -- JSON 数组字符串：加分理由
+                warnings TEXT,                   -- JSON 数组字符串：风险提示
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (ts_code, trade_date)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_daily_scores_date
+            ON daily_scores(trade_date DESC, score DESC)
+        """)
+
+        # 15. 自我改进系统跟踪表（tracking_tables.sql）
         init_tracking_tables(conn)
 
         if verbose:

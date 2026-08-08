@@ -3,12 +3,15 @@ indicators.py 核心技术指标测试
 覆盖所有独立计算函数
 """
 
+import pytest
+
 from modules.indicators import (
     DailyData,
     IndicatorResult,
     TradeSignal,
     calculate_ma,
     calculate_ema,
+    calculate_ema_series,
     calculate_sma_td,
     calculate_slope,
     calculate_kdj,
@@ -53,6 +56,7 @@ from modules.indicators import (
     detect_volume_ratio_strategy,
     detect_bull_rope,
     calculate_sandglass_score,
+    get_kline_data,
 )
 
 
@@ -129,6 +133,36 @@ class TestCalculateEMA:
 
     def test_constant_prices(self):
         assert calculate_ema([50, 50, 50, 50], 4) == 50.0
+
+
+# ========== calculate_ema_series ==========
+
+
+class TestCalculateEMASeries:
+    def test_length_matches_input(self):
+        prices = [10, 11, 12, 13, 14, 15]
+        series = calculate_ema_series(prices, 3)
+        assert len(series) == len(prices)
+
+    def test_first_value_is_first_price(self):
+        """初值约定：EMA[0] = prices[0]（首值起手，与 calculate_ema 一致）"""
+        prices = [10, 11, 12, 13, 14, 15]
+        assert calculate_ema_series(prices, 3)[0] == 10
+
+    def test_last_value_equals_calculate_ema(self):
+        """序列最后一个值必须与标量版 calculate_ema 完全相同，避免口径漂移"""
+        prices = [10, 11, 9, 13, 14, 12, 15, 16, 14, 18]
+        for period in (3, 5, 10):
+            assert calculate_ema_series(prices, period)[-1] == calculate_ema(prices, period)
+
+    def test_insufficient_data(self):
+        assert calculate_ema_series([10, 11], 5) == []
+
+    def test_manual_recursion(self):
+        """手算校验：period=3 → k=0.5"""
+        prices = [10.0, 20.0, 30.0]
+        # EMA0=10; EMA1=20*0.5+10*0.5=15; EMA2=30*0.5+15*0.5=22.5
+        assert calculate_ema_series(prices, 3) == [10.0, 15.0, 22.5]
 
 
 # ========== calculate_sma_td ==========
@@ -347,11 +381,58 @@ class TestCalculateVolRatio:
 # ========== Z哥双线战法 ==========
 
 
+def _ref_double_ema10(closes: list[float]) -> float:
+    """独立实现的参考值：EMA(EMA(C,10),10)，首值起手，k=2/11"""
+    k = 2 / 11
+
+    def ema(seq):
+        cur = seq[0]
+        out = [cur]
+        for v in seq[1:]:
+            cur = v * k + cur * (1 - k)
+            out.append(cur)
+        return out
+
+    return round(ema(ema(closes))[-1], 2)
+
+
 class TestDoubleLine:
     def test_zg_white(self):
         klines = make_klines(n=120, base_price=100.0, daily_pct=0.5)
         white = calculate_zg_white(klines)
         assert white > 0
+
+    def test_zg_white_constant_series(self):
+        """恒定收盘价下，双重平滑结果就是该恒定值"""
+        klines = make_klines(n=60, base_price=100.0, daily_pct=0.0)
+        assert calculate_zg_white(klines) == 100.0
+
+    def test_zg_white_is_true_double_smoothing(self):
+        """白线必须等于 EMA(EMA(C,10),10) 的手算参考值"""
+        klines = make_klines(n=60, base_price=100.0, daily_pct=1.0)
+        closes = [k.close for k in klines]
+        assert calculate_zg_white(klines) == _ref_double_ema10(closes)
+
+    def test_zg_white_not_ema_of_last_10_closes(self):
+        """回归：旧实现把第二次 EMA 错算在最后 10 根原始收盘价上，两者必须不同"""
+        klines = make_klines(n=60, base_price=100.0, daily_pct=1.0)
+        closes = [k.close for k in klines]
+        buggy = round(calculate_ema(closes[-10:], 10), 2)
+        assert calculate_zg_white(klines) != buggy
+
+    def test_zg_white_min_length(self):
+        """不足 10 根返回 0；满 10 根即输出双重平滑值"""
+        assert calculate_zg_white(make_klines(n=9, base_price=100.0)) == 0
+        klines10 = make_klines(n=10, base_price=100.0, daily_pct=1.0)
+        closes10 = [k.close for k in klines10]
+        assert calculate_zg_white(klines10) == _ref_double_ema10(closes10)
+
+    def test_zg_white_no_discontinuity_at_19(self):
+        """旧实现在 len=19 处有跳变分支；新实现在 18/19 根之间应连续"""
+        klines = make_klines(n=19, base_price=100.0, daily_pct=1.0)
+        w18 = calculate_zg_white(klines[:18])
+        w19 = calculate_zg_white(klines)
+        assert abs(w19 - w18) < 1.0
 
     def test_dg_yellow(self):
         klines = make_klines(n=120, base_price=100.0, daily_pct=0.5)
@@ -587,6 +668,77 @@ class TestAnalyzeStock:
         assert isinstance(result, IndicatorResult)
         assert result.ts_code == "600519.SH"
         assert result.trade_date != ""
+
+    def test_close_and_pct_chg_populated(self, temp_db, db_conn):
+        """IndicatorResult.close / pct_chg 必须来自 klines[-1]（watchlist 破位/异动预警依赖）"""
+        from tests.conftest import write_klines_to_db, write_stock_basic, generate_uptrend_klines
+
+        write_stock_basic(db_conn, "600519.SH", "测试股票")
+        rows = generate_uptrend_klines(n=120, ts_code="600519.SH")
+        write_klines_to_db(db_conn, rows)
+
+        result = analyze_stock("600519.SH", days=120)
+        assert result.close == pytest.approx(rows[-1]["close"])
+        assert result.pct_chg == pytest.approx(rows[-1]["pct_chg"])
+
+    def test_full_result_even_with_indicator_cache_hit(self, temp_db, db_conn):
+        """回归 Bug3：indicator_cache 有数据时，analyze_stock 仍必须返回完整字段
+
+        indicator_cache 只能往返约 35 个字段，管道会算 100+ 个。
+        历史实现命中缓存就直接 return，导致"谁有缓存谁的分析结果就残缺"。
+        """
+        from tests.conftest import write_klines_to_db, write_stock_basic, generate_uptrend_klines
+        from modules.indicators import (
+            _save_indicator_cache,
+            _load_indicator_cache,
+            clear_indicator_memory_cache,
+        )
+
+        write_stock_basic(db_conn, "600519.SH", "测试股票")
+        rows = generate_uptrend_klines(n=120, ts_code="600519.SH")
+        write_klines_to_db(db_conn, rows)
+
+        # 先跑一次完整管道拿到基准（无任何缓存）
+        clear_indicator_memory_cache()
+        baseline = analyze_stock("600519.SH", days=120)
+
+        # 往 indicator_cache 写一条"残缺且带脏值"的缓存行
+        klines = get_kline_data("600519.SH", 120)
+        stale = IndicatorResult(ts_code="600519.SH", trade_date=baseline.trade_date, k=99.0)
+        assert _save_indicator_cache(stale, klines) is True
+        clear_indicator_memory_cache()
+        assert _load_indicator_cache("600519.SH", baseline.trade_date) is not None
+
+        # 有缓存时再分析，结果必须与完整管道一致，而不是缓存里的残缺对象
+        result = analyze_stock("600519.SH", days=120)
+        assert result.k == baseline.k
+        assert result.k != 99.0
+        # 这些字段不在缓存注册表里，命中缓存的旧实现会全部丢失
+        assert result.sell_items is not None
+        assert result.key_k_list is not None
+        assert result.b1_score == baseline.b1_score
+        assert result.brick_action == baseline.brick_action
+        assert result.brick_consecutive == baseline.brick_consecutive
+        assert result.close == baseline.close
+
+    def test_analysis_memory_cache_returns_isolated_copy(self, temp_db, db_conn):
+        """进程内缓存命中时返回副本，调用方就地修改不污染缓存"""
+        from tests.conftest import write_klines_to_db, write_stock_basic, generate_uptrend_klines
+        from modules.indicators import clear_indicator_memory_cache
+
+        write_stock_basic(db_conn, "600519.SH", "测试股票")
+        rows = generate_uptrend_klines(n=120, ts_code="600519.SH")
+        write_klines_to_db(db_conn, rows)
+
+        clear_indicator_memory_cache()
+        first = analyze_stock("600519.SH", days=120)
+        first.market_dir = "UP"
+        first.k = -1
+
+        second = analyze_stock("600519.SH", days=120)
+        assert second is not first
+        assert second.market_dir == "NEUTRAL"
+        assert second.k != -1
 
 
 # ========== detect_didi (滴滴战法) ==========

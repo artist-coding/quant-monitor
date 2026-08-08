@@ -20,7 +20,15 @@ class FakeMarketDataSource:
         return "fake-market"
 
     def get_trade_cal(self, exchange: str, start_date: str, end_date: str):
-        return pd.DataFrame({"exchange": [exchange], "cal_date": [start_date], "is_open": [self.is_open]})
+        # 真实 trade_cal 会返回区间内的每一天，这里照样铺满整段区间
+        dates = pd.date_range(start_date, end_date).strftime("%Y%m%d").tolist()
+        return pd.DataFrame(
+            {
+                "exchange": [exchange] * len(dates),
+                "cal_date": dates,
+                "is_open": [self.is_open] * len(dates),
+            }
+        )
 
     def get_daily_by_trade_date(self, trade_date: str):
         self.market_calls += 1

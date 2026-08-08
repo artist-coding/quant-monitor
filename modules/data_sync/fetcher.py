@@ -26,6 +26,10 @@ class DataFetcher:
     def fetch_trade_cal(self, exchange: str, start_date: str, end_date: str) -> pd.DataFrame | None:
         return self.datasource.get_trade_cal(exchange, start_date, end_date)
 
+    def fetch_index_daily(self, ts_code: str, start_date: str, end_date: str) -> pd.DataFrame | None:
+        """拉取指数日线行情（Tushare index_daily 接口）。"""
+        return self.datasource.get_index_daily(ts_code, start_date, end_date)
+
     def fetch_stk_factor(self, ts_code: str, start_date: str, end_date: str) -> pd.DataFrame | None:
         return self.datasource.get_stk_factor(ts_code, start_date, end_date)
 

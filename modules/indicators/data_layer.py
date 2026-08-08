@@ -1,3 +1,4 @@
+import copy
 from typing import Any, Optional
 from collections.abc import Callable
 
@@ -65,13 +66,38 @@ except ImportError:
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
 # 指标缓存层（内存 + SQLite）
+#
+# 【重要】这里有两个语义完全不同的缓存，不要混用：
+#
+# 1. _indicator_memory_cache —— indicator_cache 表（DB）的内存镜像。
+#    存的是 _load_from_row 还原出来的对象，只含注册表里那约 35 个字段，
+#    是**残缺**的。它服务于 _load_indicator_cache/_save_indicator_cache，
+#    对应 indicator_cache 表的真正用途：给下游 SQL JOIN（strategies 取
+#    boll/rsi/adx/dmi）和历史快照用。
+#
+# 2. _analysis_memory_cache —— analyze_stock 完整管道结果的进程内缓存。
+#    存的是跑完 _PIPELINE 的**完整**对象（100+ 字段），key 带上 days，
+#    因为不同 days 的分析窗口会算出不同结果。
+#
+# 两者绝不互相写入，避免出现"有时完整有时残缺"的结果。
 _indicator_memory_cache: dict[tuple[str, str], IndicatorResult] = {}
+
+# analyze_stock 完整分析结果的进程内缓存: (ts_code, trade_date, days) -> IndicatorResult
+_analysis_memory_cache: dict[tuple[str, str, int], IndicatorResult] = {}
+
+# 完整结果对象比较大（含 key_k_list / sell_items 等），
+# 在长驻进程（API 服务）里按 FIFO 设上限，避免全市场逐票分析后内存无限增长。
+_ANALYSIS_CACHE_MAX = 2000
 
 # ==================== 字段映射注册表（v3.x 重构：统一 load/save/analyze 三处字段管理） ====================
 
 # IndicatorResult 属性 <-> DB 列名的映射
 # 新增字段只需在此添加一行，load/save 自动同步
 _FLOAT_FIELDS: list[str] = [
+    # 当日行情快照（indicator_cache 表已有 close/pct_chg 两列，
+    # 由 _build_save_tuple 从 today(DailyData) 写入，这里负责反向还原）
+    "close",
+    "pct_chg",
     "k",
     "d",
     "j",
@@ -287,8 +313,17 @@ def _save_indicator_cache(result: IndicatorResult, klines: list[DailyData]) -> b
 
 
 def clear_indicator_memory_cache():
-    """清空内存缓存（用于测试或数据更新后）"""
+    """清空内存缓存（用于测试或数据更新后）
+
+    同时清空 analyze_stock 的完整分析结果缓存，避免数据更新后拿到旧结果。
+    """
     _indicator_memory_cache.clear()
+    _analysis_memory_cache.clear()
+
+
+def clear_analysis_memory_cache():
+    """只清空 analyze_stock 的完整分析结果进程内缓存"""
+    _analysis_memory_cache.clear()
 
 
 def get_kline_data(ts_code: str, days: int = 100) -> list[DailyData]:
@@ -607,6 +642,15 @@ _PIPELINE: list[tuple[int, Callable[[Any, Any], None]]] = [
 def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
     """综合分析单只股票（管道模式）
 
+    始终执行完整的 _PIPELINE，保证返回的 IndicatorResult 字段齐全。
+
+    这里**不**读 indicator_cache 表：该表只能往返注册表里那约 35 个字段，
+    而管道会产出 100+ 个字段（b1_score / brick_action / key_k_list / sell_items ...）。
+    一旦短路返回 DB 缓存，"有缓存的票"就会拿到残缺结果。
+    加速改由进程内缓存承担：key = (ts_code, trade_date, days)，
+    同一进程内重复分析同一只票（例如 monitor 的 scan_watchlist 与
+    generate_daily_report 会各算一遍票池）直接命中，不重复跑管道。
+
     Args:
         ts_code: 股票代码
         days: 分析数据天数
@@ -619,11 +663,18 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
         return IndicatorResult(ts_code=ts_code, trade_date="")
 
     today = klines[-1]
-    cached = _load_indicator_cache(ts_code, today.trade_date)
-    if cached:
-        return cached
+    mem_key = (ts_code, today.trade_date, days)
+    cached = _analysis_memory_cache.get(mem_key)
+    if cached is not None:
+        # 返回副本，避免调用方就地修改污染缓存
+        return copy.copy(cached)
 
-    result = IndicatorResult(ts_code=ts_code, trade_date=today.trade_date)
+    result = IndicatorResult(
+        ts_code=ts_code,
+        trade_date=today.trade_date,
+        close=today.close,
+        pct_chg=today.pct_chg,
+    )
 
     # 执行计算管道
     n = len(klines)
@@ -634,6 +685,10 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
     # 交易信号（依赖前面计算的部分指标）
     result.signal = detect_trade_signal(klines)
 
+    if len(_analysis_memory_cache) >= _ANALYSIS_CACHE_MAX:
+        # FIFO 淘汰最早写入的一条（dict 保序）
+        _analysis_memory_cache.pop(next(iter(_analysis_memory_cache)), None)
+    _analysis_memory_cache[mem_key] = copy.copy(result)
     return result
 
 

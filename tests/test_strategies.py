@@ -986,3 +986,176 @@ class TestDetectTopPinwheel:
         klines = generate_uptrend_klines(n=10, start_price=100.0, daily_pct=0.5)
         signal = detect_top_pinwheel(klines, 9)
         assert signal is None
+
+
+class TestDictToDailyMDCFields:
+    """_dict_to_daily 对 MDC 多维验证字段的映射（历史上完全缺失，导致 MDC 加分是死逻辑）"""
+
+    def test_mdc_indicator_fields_mapped(self):
+        from modules.strategies.core import _dict_to_daily
+
+        row = make_kline_row("600487.SH", "20260717", 58.39, 100000)
+        row.update(
+            {
+                "boll_upper": 131.56,
+                "boll_mid": 91.59,
+                "boll_lower": 51.62,
+                "rsi6": 15.66,
+                "adx": 42.63,
+                "dmi_plus": 9.41,
+                "dmi_minus": 53.13,
+            }
+        )
+        daily = _dict_to_daily([row])[0]
+
+        assert daily.boll_upper == 131.56
+        assert daily.boll_mid == 91.59
+        assert daily.boll_lower == 51.62
+        assert daily.rsi6 == 15.66
+        assert daily.adx == 42.63
+        assert daily.dmi_plus == 9.41
+        assert daily.dmi_minus == 53.13
+
+    def test_mdc_flow_fields_mapped(self):
+        from modules.strategies.core import _dict_to_daily
+
+        row = make_kline_row("600487.SH", "20260717", 58.39, 100000)
+        row.update({"net_mf": -1234.5, "large_inflow": 800.0, "large_outflow": 2000.0})
+        daily = _dict_to_daily([row])[0]
+
+        assert daily.net_mf == -1234.5
+        assert daily.large_inflow == 800.0
+        assert daily.large_outflow == 2000.0
+
+    def test_missing_keys_do_not_raise(self):
+        """make_kline_row 之类的裸 dict 完全没有 MDC 键，必须容错而不是 KeyError"""
+        from modules.strategies.core import _dict_to_daily
+
+        row = make_kline_row("600519.SH", "20260717", 1500.0, 10000)
+        assert "boll_lower" not in row
+
+        daily = _dict_to_daily([row])[0]
+
+        assert daily.boll_lower is None
+        assert daily.rsi6 is None
+        assert daily.adx is None
+        # 资金流字段保持 0 语义（下游存在裸算术，None 会 TypeError）
+        assert daily.large_inflow == 0.0
+        assert daily.large_outflow == 0.0
+        assert daily.net_mf == 0.0
+
+    def test_zero_indicator_treated_as_missing(self):
+        """get_kline_data 把 NULL fallback 成 0；0 不是有效价格/指标，必须还原成 None"""
+        from modules.strategies.core import _dict_to_daily
+
+        row = make_kline_row("600519.SH", "20260717", 1500.0, 10000)
+        row.update({"boll_lower": 0, "boll_mid": 0, "boll_upper": 0, "rsi6": 0, "adx": 0})
+        daily = _dict_to_daily([row])[0]
+
+        assert daily.boll_lower is None
+        assert daily.boll_mid is None
+        assert daily.rsi6 is None
+        # 若 boll_lower 仍是 0，close <= 0*1.02 恒为 False，但 0 参与其它比较会得出错误结论
+        assert not (daily.boll_lower and daily.close <= daily.boll_lower * 1.02)
+
+    def test_none_indicator_stays_none(self):
+        from modules.strategies.core import _dict_to_daily
+
+        row = make_kline_row("600519.SH", "20260717", 1500.0, 10000)
+        row.update({"boll_lower": None, "dmi_plus": None, "large_inflow": None})
+        daily = _dict_to_daily([row])[0]
+
+        assert daily.boll_lower is None
+        assert daily.dmi_plus is None
+        assert daily.large_inflow == 0.0
+
+    @staticmethod
+    def _b1_trigger_rows():
+        """构造一段确定性触发 B1 的 dict K 线：30 天横盘 + 3 天急跌 + 1 天缩量小阳"""
+        rows = []
+        price = 100.0
+        for i in range(30):
+            rows.append(
+                dict(
+                    ts_code="T.SH",
+                    trade_date=f"2026{i:04d}",
+                    open=price,
+                    high=price * 1.005,
+                    low=price * 0.995,
+                    close=price,
+                    vol=10000.0,
+                )
+            )
+        for i in range(3):
+            prev = price
+            price *= 0.92
+            rows.append(
+                dict(
+                    ts_code="T.SH",
+                    trade_date=f"20261{i:03d}",
+                    open=prev,
+                    high=prev,
+                    low=price * 0.99,
+                    close=price,
+                    vol=8000.0,
+                )
+            )
+        close = price * 1.001
+        rows.append(
+            dict(
+                ts_code="T.SH",
+                trade_date="20269999",
+                open=price * 0.999,
+                high=close * 1.002,
+                low=price * 0.995,
+                close=close,
+                vol=3000.0,
+            )
+        )
+        for i, r in enumerate(rows):
+            prev_close = rows[i - 1]["close"] if i else r["close"]
+            prev_vol = rows[i - 1]["vol"] if i else r["vol"]
+            r["amount"] = r["close"] * r["vol"]
+            r["pct_chg"] = (r["close"] - prev_close) / prev_close * 100
+            r["prev_close"] = prev_close
+            r["prev_vol"] = prev_vol
+            r["is_rise"] = r["close"] > prev_close
+            r["is_yinxian"] = r["close"] < prev_close
+            r["is_suoliang"] = r["vol"] <= prev_vol * 0.5
+            r["is_beidou"] = r["vol"] >= prev_vol * 2
+            r["is_jiayin"] = r["close"] < r["open"] and r["close"] > prev_close
+            r["is_fangliang_yinxian"] = r["close"] < prev_close and r["vol"] > prev_vol * 1.5
+        return rows
+
+    def test_b1_mdc_bonus_actually_applies(self):
+        """MDC 字段流到 DailyData 后，B1 的布林下轨/RSI 加分必须真正生效"""
+        from modules.strategies.core import _dict_to_daily
+
+        rows = self._b1_trigger_rows()
+        last = len(rows) - 1
+
+        plain = detect_b1(_dict_to_daily(rows), last)
+        assert plain is not None
+        assert "触及布林下轨(超跌)" not in plain.description
+
+        for r in rows:
+            r["boll_lower"] = r["close"] * 0.99  # 收盘价贴近布林下轨
+            r["rsi6"] = 10.0  # 极端超卖
+
+        boosted = detect_b1(_dict_to_daily(rows), last)
+        assert boosted is not None
+        assert boosted.confidence > plain.confidence
+        assert "触及布林下轨(超跌)" in boosted.description
+        assert "RSI极端超卖" in boosted.description
+
+    def test_b1_zero_boll_lower_gives_no_bonus(self):
+        """boll_lower=0（indicator_cache 未回填）不得被当成有效价格参与超跌判断"""
+        from modules.strategies.core import _dict_to_daily
+
+        rows = self._b1_trigger_rows()
+        for r in rows:
+            r["boll_lower"] = 0
+
+        signal = detect_b1(_dict_to_daily(rows), len(rows) - 1)
+        assert signal is not None
+        assert "触及布林下轨(超跌)" not in signal.description
