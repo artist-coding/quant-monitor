@@ -112,10 +112,10 @@ def _index_frame(ts_code: str = "000001.SH") -> pd.DataFrame:
 
 
 def test_init_database_creates_new_tables(temp_db):
-    """init_database 必须创建 trade_cal / index_daily / daily_scores 三张表"""
+    """init_database 必须创建 trade_cal / index_daily / buy_decisions 三张表"""
     with get_connection() as conn:
         names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    assert {"trade_cal", "index_daily", "daily_scores"}.issubset(names)
+    assert {"trade_cal", "index_daily", "buy_decisions"}.issubset(names)
 
 
 def test_init_database_is_idempotent(temp_db):

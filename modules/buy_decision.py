@@ -1,43 +1,55 @@
-"""阶段1 · 买点确认引擎（日线口径）。
+"""买点确认引擎（日线口径，全市场扫描用）。
 
-**两阶段漏斗**：
+**判定顺序**——大盘在最前，是准入门槛而不是加减分：
 
     第一阶段 confirm_buy —— 逐票判"这个时点该不该买"
-        否决 → 触发 → 确认 → 大盘环境    ⇒  BUY / WATCH / NONE
+
+        可交易性 → 大盘门槛 → 一票否决 → B1 触发 → MACD/量能确认
+                                                    ⇒ BUY / WATCH / NONE
 
     第二阶段 select_final_picks —— 从 BUY 里挑"最终买哪几只"
-        按主线/行业强弱排序 + 门槛过滤    ⇒  最终持仓候选
 
-为什么分两阶段而不是合成一个总分：这两件事回答的是不同问题。
-第一阶段问"技术面成不成立"，第二阶段问"成立的这些里哪几个值得占用仓位"。
-把主线强度揉进第一阶段的总分会让一条强主线**把一个本来不合格的买点推过阈值**
-（主线层满分 +12，而 BUY 阈值只有 65），等于用板块热度替技术面背书。
-分开之后，主线只影响"从合格的里面挑谁"，不影响"合不合格"。
+        按主线/行业强弱排序 + 强度门槛              ⇒ 最终持仓候选
 
-主线强度仍会在第一阶段算好并挂在决策上（``BuyDecision.theme``），
-只是**不计入 score**——展示用、第二阶段用。
+大盘为什么是门槛而不是分数
+--------------------------
 
-设计原则
+大盘不好就整体不选股，不存在"个股够强就能抵消大盘"的情形。写成加减分
+（原来是 LONG +8 / SHORT −12）意味着一个 90 分的买点在空头市场里仍有 78 分、
+照样过 65 的线，等于允许逆势加仓。改成门槛后，大盘不过关直接全盘停手，
+一根 K 线都不用取——顺带把全市场扫描的开销省掉了。
+
+门槛通过后**不再给分**：它已经履行完职责，再叠一次分就是重复计算。
+
+触发层只留 B1
+-------------
+
+B1（``strategies.base_strategies.detect_b1``）是唯一的买点触发器：
+J < −10 + 非绿砖（4 日内阴线 < 4 根）+ 缩量加分，再叠 MDC 多维验证与麒麟阶段。
+B2/B3/SB1 与各路复合战法都不再作为触发条件——它们要么是 B1 之后的确认
+（B2/B3），要么口径与 B1 重叠，混在一起会让"为什么买"这件事说不清楚。
+
+MDC 现算，不读 indicator_cache
+------------------------------
+
+B1 的布林/RSI6/ADX/DMI 加分项原本依赖 ``indicator_cache`` 联表，而那张表
+只覆盖票池 7 只票——全市场扫描时这些字段全是 None，加分项一条都不触发。
+现在改为从 K 线**现场计算**（``calculate_bollinger`` / ``calculate_rsi_multi`` /
+``calculate_dmi``），5000 只票一视同仁。资金流三项仍为 0：moneyflow 表是空的，
+没有替代数据源。
+
+其他约束
 --------
 
-1. **只用系统里现成的战法，不新编战法。** 本模块不发明任何形态判据，
-   每一层调用的都是 ``modules.strategies`` / ``modules.indicators`` 里
-   已经存在并被测试覆盖的检测函数。本模块新增的只有"怎么把它们组合起来"
-   ——即各层的加减分权重和最终阈值，这些集中在下面的常量区，逐条注明理由。
-
-2. **纯日线，不碰分时。** 量比战法 ``detect_volume_ratio_strategy`` 的 6 场景
-   矩阵阈值（>40/>20/10~20）是分钟级量比口径，套在"当日量÷5日均量"上实测
-   1540 个交易日里买入侧 0 触发（最大量比只有 5.49），故本模块**不使用它**。
-   成交量维度改用阈值本就是日线口径的 ``detect_volume_attack``（量比>3 且涨>2%）、
-   ``detect_double_gun``（双枪：主力建仓确认）以及 B1 自带的缩量判定。
-
-3. **一票否决优先于一切加分。** MACD 的 ``macd_veto``（DIF<0 且无底背离）在
-   ``complex_patterns.detect_macd_signals`` 里就叫"一票否决权"，这里如实执行：
-   命中即 NONE，不再看后面任何加分。否则会出现"战法信号很漂亮但趋势根本没转"
-   的伪买点。
-
-4. **卖出侧不在本模块。** 三态里的"今日尾盘卖出"需要盘中快照才能在收盘前给出，
-   属于后续的盘中任务，此处只产出买入侧结论。
+- **纯日线，不碰分时。** 量比战法 ``detect_volume_ratio_strategy`` 的 6 场景
+  阈值（>40/>20/10~20）是分钟级量比口径，套在"当日量÷5日均量"上实测 1540 个
+  交易日里买入侧 0 触发（最大量比只有 5.49），故不使用。成交量维度改用阈值
+  本就是日线口径的 ``detect_volume_attack``、``detect_double_gun`` 与 B1 自带的缩量判定。
+- **一票否决优先于一切加分。** MACD 的 ``macd_veto``（DIF<0 且无底背离）在
+  ``complex_patterns.detect_macd_signals`` 里就叫"一票否决权"，此处如实执行。
+- **只组合现成战法，不新编战法。** 本模块新增的只有各层权重与阈值，集中在
+  下面的常量区并逐条注明理由。
+- **卖出侧不在本模块。**
 """
 
 from __future__ import annotations
@@ -55,13 +67,16 @@ logger = logging.getLogger(__name__)
 # ==================== 分层常量 ====================
 #
 # 下面所有数字是本模块唯一"新增"的东西——战法本身一律复用现成实现。
-# 每条都写清楚为什么是这个量级，方便日后用 daily_scores/buy_decisions 的
-# 历史数据做归因时逐项调参。
+# 每条都写清楚为什么是这个量级，方便日后用 buy_decisions 的历史数据做归因时逐项调参。
 
 # 买点战法信号的有效期（交易日）。买点是时效性极强的东西：B1 说的是"今天缩量
 # 回调到位"，5 天前的 B1 早就该被证实或证伪了。取 3 根 K 线——足够容纳
 # "B1 出现后等一天确认"的常规节奏，又不至于把上周的旧信号当成今天的买点。
 FRESH_BARS = 3
+
+# 最少 K 线根数。B1 自身只要 10 根，但布林要 20、DMI 要 30——
+# 不够 30 根时 MDC 全缺，判出来的 B1 是裸 J 值，不如不判。
+_MIN_BARS = 30
 
 # 最终判定阈值
 SCORE_BUY = 65.0  # ≥ 判 BUY：明日开盘可买
@@ -85,21 +100,27 @@ _VOL_DOUBLE_GUN = 8.0  # 双枪：两根放量阳夹一堆缩量阴，主力建�
 _VOL_B1_SUOLIANG = 5.0  # B1 当日缩量：B1 的最佳形态就是"缩量回调"
 _VOL_FANGLIANG_YIN = -8.0  # 放量阴线：抛压
 
-# ── 大盘环境层 ──
-# A 股个股与大盘的相关性极高，逆势做多的胜率明显更差，所以 SHORT 的扣分
-# 大于 LONG 的加分（不对称是有意的：宁可错过，不可在跌势里加仓）。
-_MARKET_LONG = 8.0
-_MARKET_SHORT = -12.0
-# 强度对 50 的偏离再做一档微调，最多 ±5 分
-_MARKET_STRENGTH_SCALE = 10.0
-_MARKET_STRENGTH_CAP = 5.0
+# ── 大盘门槛（在触发层之前）──
+#
+# 取值语义：
+#   "long"    只有 LONG 才选股（最严）
+#   "neutral" LONG 与 NEUTRAL 都可选，SHORT 停手（默认）
+#   "off"     不做大盘判断
+#
+# 默认取 "neutral" 而不是 "long"：SHORT 是无歧义的"大盘不好"，而 NEUTRAL 是
+# "不明朗"，震荡市里选择性做多是常态，一刀切会让系统大部分时间不产出任何东西。
+# 2026 年 16 个全市场同步日实测分布：LONG 43.8% / SHORT 31.2% / NEUTRAL 25.0%
+# ——想更保守就把门槛调到 "long"，仍有四成多的交易日可选股。
+MARKET_GATE_LONG = "long"
+MARKET_GATE_NEUTRAL = "neutral"
+MARKET_GATE_OFF = "off"
+DEFAULT_MARKET_GATE = MARKET_GATE_NEUTRAL
+# 大盘环境算不出来时（当日非全市场同步日）是否放行。默认放行并给出警告：
+# 数据没同步上来是运维问题，不该被解读成"大盘不好"。
+ALLOW_ON_UNKNOWN_MARKET = True
 
-# ── 共振层 ──
-# 多个**互不相同**的买点战法在有效期内同时命中，是相互独立的证据在指向同一个
-# 结论，比单一战法可信。只数不同战法，不数同一战法在不同日期的重复命中
-# ——B3 连着三天报同一个中继形态，那是一个证据不是三个。
-_RESONANCE_PER_EXTRA = 4.0
-_RESONANCE_CAP = 12.0
+# 注：原有的"多战法共振"加分已随触发层收敛到 B1 一并移除——
+# 只剩一个触发器时 distinct 恒为 1，共振分恒为 0，是死代码。
 
 # ── 第二阶段：主线/行业筛选 ──
 #
@@ -115,20 +136,9 @@ DEFAULT_MIN_GROUP_STRENGTH = 50.0
 # 用它筛选时门槛加严一档，因为行业归类粗、噪音大。
 INDUSTRY_STRENGTH_PENALTY = 10.0
 
-# 买入侧战法：这些检测器的 action 都是 BUY（已核对 base_strategies /
-# compound_strategies 的实现）。四分之三阴量是 SELL（假突破识别），不在此列。
-_BUY_DETECTORS = (
-    ("B1", "detect_b1", True),
-    ("B2", "detect_b2", True),
-    ("B3", "detect_b3", False),
-    ("SB1", "detect_sb1", False),
-    ("长安战法", "detect_changan", True),
-    ("娜娜图形", "detect_nana", True),
-    ("异动+地量地价", "detect_yidong_dilian", False),
-    ("平行重炮", "detect_pinghang", False),
-    ("坑里起好货", "detect_kengqi", False),
-    ("对称VA", "detect_duichen_va", False),
-)
+# 唯一的买点触发器。B2/B3/SB1 与各路复合战法已移除——它们要么是 B1 之后的
+# 确认（B2/B3），要么口径与 B1 重叠，混在一起会让"为什么买"说不清楚。
+_TRIGGER_NAME = "B1"
 
 
 @dataclass
@@ -179,6 +189,16 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _latest_trade_date() -> str:
+    """库内最新交易日（未指定日期时的默认目标日）。"""
+    try:
+        with get_connection() as conn:
+            row = conn.execute("SELECT MAX(trade_date) FROM daily_kline").fetchone()
+        return str(row[0]) if row and row[0] else ""
+    except Exception:
+        return ""
+
+
 def _num(mapping: dict[str, Any] | None, key: str, default: float) -> float:
     """从 dict 里取一个数值，缺失或非数值时回落到 default。
 
@@ -202,7 +222,7 @@ def _resolve_index(klines: Sequence[Any], trade_date: str | None) -> int:
 
     刻意不要求精确匹配。目标日的数据还没同步上来时（票池同步失败、停牌、
     或者干脆就是拿未来日期在跑），精确匹配会直接判"找不到"，而调用方多半
-    会把这条空决策按目标日落库——这正是阶段0 在 daily_scores 上踩过的坑：
+    会把这条空决策按目标日落库——这是踩过的坑：
     日期存疑的脏行永远不会被正确重跑覆盖。
 
     改成向前回退后，语义变成"截至 trade_date，用能拿到的最新数据判定"，
@@ -268,48 +288,105 @@ def _collect_vetoes(klines: list, index: int) -> tuple[list[str], dict[str, Any]
     return vetoes, detail
 
 
-def _collect_triggers(klines: list, index: int) -> list[dict[str, Any]]:
-    """触发层：最近 FRESH_BARS 根内命中的买入战法，按置信度降序。"""
-    from .indicators import detect_kirin_stage
-    from .strategies import base_strategies, compound_strategies
+def attach_mdc_fields(klines: list) -> None:
+    """就地给 K 线补上 B1 需要的 MDC 指标字段（布林 / RSI6 / DMI+ADX）。
 
-    modules_by_name = {**vars(base_strategies), **vars(compound_strategies)}
-    start = max(0, index - FRESH_BARS + 1)
+    B1 的多维验证原本靠 ``strategies.core.get_kline_data`` 联 ``indicator_cache``
+    取这些值，而那张表只覆盖票池 7 只票——全市场扫描时字段全是 None，
+    "触及布林下轨 +15%""RSI 极端超卖 +5%""ADX 高位动能竭尽 +10%"
+    这些加分项一条都不会触发，B1 只剩裸的 J 值判断。
 
-    triggers: list[dict[str, Any]] = []
-    for i in range(start, index + 1):
+    这里改为逐日现算。计算量是 O(n) 次调用 × n 根 K 线，150 根约 30ms，
+    比联表查询贵，但换来的是全市场一视同仁的判定口径。
+
+    资金流三项（net_mf/large_inflow/large_outflow）保持默认 0：
+    moneyflow 表是空的，且没有替代数据源，B1 的"主力大单净流入 +10%"
+    在全市场和票池里都同样不会触发。
+    """
+    from .indicators import calculate_bollinger, calculate_dmi, calculate_rsi_multi
+
+    for i, k in enumerate(klines):
         window = klines[: i + 1]
-        # 麒麟阶段是 B1/B2/长安/娜娜 的背景参数，每个 i 只算一次
+        n = len(window)
+        # 各指标的最小样本量与 data_sync.indicator_cache 保持一致，
+        # 免得同一只票在两条路径上算出不同的值
+        if n >= 25:
+            try:
+                k.rsi6 = calculate_rsi_multi(window)[0]
+            except Exception:
+                pass
+        if n >= 20:
+            try:
+                boll = calculate_bollinger(window)
+                if boll:
+                    k.boll_mid, k.boll_upper, k.boll_lower = boll[0], boll[1], boll[2]
+            except Exception:
+                pass
+        if n >= 30:
+            try:
+                k.dmi_plus, k.dmi_minus, k.adx = calculate_dmi(window)
+            except Exception:
+                pass
+
+
+def _collect_triggers(klines: list, index: int) -> list[dict[str, Any]]:
+    """触发层：最近 FRESH_BARS 根内的 B1 信号，按置信度降序。"""
+    from .indicators import detect_kirin_stage
+    from .strategies.base_strategies import detect_b1
+
+    start = max(0, index - FRESH_BARS + 1)
+    triggers: list[dict[str, Any]] = []
+
+    for i in range(start, index + 1):
+        # 麒麟阶段是 B1 的背景参数（吸筹 +20%、回落 +10%、派发 −30%）
         kirin_context = None
         try:
-            kirin_context = detect_kirin_stage(window)
+            kirin_context = detect_kirin_stage(klines[: i + 1])
         except Exception as exc:
             logger.debug("麒麟阶段检测失败 index=%d: %s", i, exc)
 
-        for label, fn_name, wants_kirin in _BUY_DETECTORS:
-            fn = modules_by_name.get(fn_name)
-            if fn is None:
-                continue
-            try:
-                sig = fn(klines, i, kirin_context=kirin_context) if wants_kirin else fn(klines, i)
-            except Exception as exc:
-                logger.debug("战法 %s 在 index=%d 检测异常: %s", label, i, exc)
-                continue
-            if sig is None:
-                continue
-            triggers.append(
-                {
-                    "strategy": label,
-                    "trade_date": sig.trade_date,
-                    "confidence": round(float(sig.confidence or 0), 4),
-                    "description": sig.description or "",
-                    "bars_ago": index - i,
-                    "stop_loss": sig.stop_loss,
-                }
-            )
+        try:
+            sig = detect_b1(klines, i, kirin_context=kirin_context)
+        except Exception as exc:
+            logger.debug("B1 在 index=%d 检测异常: %s", i, exc)
+            continue
+        if sig is None:
+            continue
+        triggers.append(
+            {
+                "strategy": _TRIGGER_NAME,
+                "trade_date": sig.trade_date,
+                "confidence": round(float(sig.confidence or 0), 4),
+                "description": sig.description or "",
+                "bars_ago": index - i,
+                "stop_loss": sig.stop_loss,
+            }
+        )
 
     triggers.sort(key=lambda t: (t["confidence"], -t["bars_ago"]), reverse=True)
     return triggers
+
+
+def check_market_gate(market: dict[str, Any] | None, gate: str = DEFAULT_MARKET_GATE) -> str:
+    """大盘门槛。返回拦截原因；空字符串表示放行。
+
+    这是准入判断而非打分——大盘不过关就整体停手，不存在"个股够强抵消大盘"。
+    """
+    if gate == MARKET_GATE_OFF:
+        return ""
+    if not market:
+        return "" if ALLOW_ON_UNKNOWN_MARKET else "大盘环境未知"
+
+    direction = str(market.get("market_dir", "")).upper()
+    strength = _num(market, "market_strength", 50.0)
+
+    if direction == "SHORT":
+        return f"大盘偏空（强度 {strength:.1f}），停止选股"
+    if direction == "NEUTRAL" and gate == MARKET_GATE_LONG:
+        return f"大盘中性（强度 {strength:.1f}），门槛要求 LONG，停止选股"
+    if not direction:
+        return "" if ALLOW_ON_UNKNOWN_MARKET else "大盘环境未知"
+    return ""
 
 
 def _score_macd(macd_sig: dict[str, Any]) -> tuple[float, list[str]]:
@@ -374,25 +451,13 @@ def _score_volume(klines: list, index: int, triggers: list[dict[str, Any]]) -> t
     return delta, notes, detail
 
 
-def _score_market(market: dict[str, Any]) -> tuple[float, list[str]]:
-    """大盘环境层。"""
-    direction = str(market.get("market_dir", "NEUTRAL"))
-    strength = _num(market, "market_strength", 50.0)
-
-    delta = 0.0
-    notes: list[str] = []
-    if direction == "LONG":
-        delta += _MARKET_LONG
-        notes.append(f"大盘偏多 {_MARKET_LONG:+.0f}")
-    elif direction == "SHORT":
-        delta += _MARKET_SHORT
-        notes.append(f"大盘偏空（逆势做多胜率差） {_MARKET_SHORT:+.0f}")
-
-    tilt = _clamp((strength - 50.0) / _MARKET_STRENGTH_SCALE, -_MARKET_STRENGTH_CAP, _MARKET_STRENGTH_CAP)
-    if abs(tilt) >= 0.5:
-        delta += tilt
-        notes.append(f"大盘强度{strength:.1f} {tilt:+.1f}")
-    return delta, notes
+def _describe_market(market: dict[str, Any] | None) -> list[str]:
+    """把已通过门槛的大盘环境渲染成一条说明（不打分——门槛已经履行完职责）。"""
+    if not market:
+        return ["大盘环境未知（当日非全市场同步日），已按放行处理"]
+    return [
+        f"大盘{market.get('market_dir', '?')}（强度{_num(market, 'market_strength', 50.0):.1f}）通过门槛"
+    ]
 
 
 def _describe_theme(theme: dict[str, Any] | None) -> list[str]:
@@ -422,6 +487,8 @@ def confirm_buy(
     klines: list | None = None,
     days: int = 150,
     theme_lookback: int | None = None,
+    market_gate: str = DEFAULT_MARKET_GATE,
+    skip_market_gate: bool = False,
 ) -> BuyDecision:
     """对单只票做买点确认。
 
@@ -429,9 +496,12 @@ def confirm_buy(
         ts_code: 股票代码
         trade_date: 目标交易日 YYYYMMDD；None 表示用库里最新一根 K 线
         market: 预先算好的大盘环境（批量调用时传入，避免每只票重算一次）
-        klines: 预先取好的 DailyData 序列（须含 MDC 字段，见 strategies.core.get_kline_data）
+        klines: 预先取好的 DailyData 序列。MDC 字段会被就地补算，
+            不需要调用方保证已联 indicator_cache。
         days: 未传 klines 时的回溯 K 线根数
         theme_lookback: 主线强度的统计窗口；None 用 themes.DEFAULT_LOOKBACK
+        market_gate: 大盘门槛，见 MARKET_GATE_* 常量
+        skip_market_gate: 批量扫描时门槛已在外层统一判过，此处跳过重复判断
     """
     from .strategies.core import _dict_to_daily, get_kline_data
 
@@ -454,6 +524,29 @@ def confirm_buy(
         decision.trade_date = ""
         return decision
 
+    # ── 第一层：大盘门槛（在取 K 线和一切个股判断之前）──
+    # 大盘不好就整体不选股，不存在"个股够强抵消大盘"。放在最前还有个实际好处：
+    # 全市场扫描时门槛不过关可以一根 K 线都不读就返回。
+    if market is None and not skip_market_gate:
+        from .market_context import compute_market_context
+
+        try:
+            market = compute_market_context(trade_date or _latest_trade_date())
+        except Exception as exc:
+            logger.warning("大盘环境计算失败: %s", exc)
+            market = None
+    decision.market = market or {}
+
+    if not skip_market_gate:
+        blocked = check_market_gate(market, market_gate)
+        if blocked:
+            decision.name = name
+            decision.action = "NONE"
+            decision.vetoes = [f"大盘门槛未通过：{blocked}"]
+            decision.detail["stopped_at"] = "market_gate"
+            decision.trade_date = ""
+            return decision
+
     if klines is None:
         raw = get_kline_data(ts_code, days)
         klines = _dict_to_daily(raw) if raw else []
@@ -468,22 +561,29 @@ def confirm_buy(
         decision.trade_date = ""
         decision.detail["reason"] = f"{trade_date} 早于库内最早的 K 线（{klines[0].trade_date}），无数据可判"
         return decision
-    # 战法检测普遍需要 20 根以上历史（detect_b3 要 20、detect_duichen_va 更多）
-    if index < 20:
+    # B1 自身只要 10 根，但布林要 20、DMI 要 30、麒麟阶段更多。
+    # 统一要求 30 根，低于此的票 MDC 全缺，判出来的 B1 是裸 J 值，没有意义。
+    if index < _MIN_BARS:
         decision.trade_date = klines[index].trade_date
-        decision.detail["reason"] = f"{klines[index].trade_date} 之前只有 {index} 根 K 线，不足以检测战法"
+        decision.detail["reason"] = (
+            f"{klines[index].trade_date} 之前只有 {index} 根 K 线，不足 {_MIN_BARS} 根，无法完整判定"
+        )
         return decision
 
     decision.trade_date = klines[index].trade_date
     decision.name = name
 
-    # ── 第一层：一票否决 ──
+    # B1 的布林/RSI/DMI 加分项需要这些字段；indicator_cache 只覆盖票池，
+    # 全市场扫描必须现算，否则 B1 退化成裸 J 值判断。
+    attach_mdc_fields(klines)
+
+    # ── 第二层：一票否决 ──
     vetoes, veto_detail = _collect_vetoes(klines, index)
     macd_sig = veto_detail.pop("_macd_sig", {})
     decision.detail.update(veto_detail)
     decision.vetoes = vetoes
 
-    # ── 第二层：触发 ──
+    # ── 第三层：B1 触发 ──
     triggers = _collect_triggers(klines, index)
     decision.triggers = triggers
 
@@ -494,7 +594,7 @@ def confirm_buy(
     if not triggers:
         decision.action = "NONE"
         decision.detail["stopped_at"] = "no_trigger"
-        decision.detail["reason"] = f"最近 {FRESH_BARS} 个交易日内无任何买入战法信号"
+        decision.detail["reason"] = f"最近 {FRESH_BARS} 个交易日内无 B1 买点信号"
         return decision
 
     # 显式取置信度最高的那个，不依赖 _collect_triggers 的返回顺序——
@@ -503,44 +603,21 @@ def confirm_buy(
     decision.base_strategy = best["strategy"]
     score = float(best["confidence"]) * 100.0
     breakdown: dict[str, float] = {"base": round(score, 2)}
-    confirms: list[str] = [f"{best['strategy']}触发（{best['trade_date']}，置信度{best['confidence']:.2f}）"]
+    confirms = _describe_market(market)
+    confirms.append(f"{best['strategy']}触发（{best['trade_date']}，置信度{best['confidence']:.2f}）")
 
-    # ── 共振：多个不同战法同时指向买入 ──
-    distinct = {t["strategy"] for t in triggers}
-    resonance = min(_RESONANCE_PER_EXTRA * (len(distinct) - 1), _RESONANCE_CAP)
-    if resonance > 0:
-        score += resonance
-        others = sorted(distinct - {best["strategy"]})
-        confirms.append(f"{len(distinct)}个战法共振（{'、'.join(others)}） {resonance:+.0f}")
-    breakdown["resonance"] = round(resonance, 2)
-
-    # ── 第三层：MACD 确认 ──
+    # ── 第四层：MACD 确认 ──
     macd_delta, macd_notes = _score_macd(macd_sig)
     score += macd_delta
     breakdown["macd"] = round(macd_delta, 2)
     confirms.extend(macd_notes)
 
-    # ── 第四层：成交量确认 ──
+    # ── 第五层：成交量确认 ──
     vol_delta, vol_notes, vol_detail = _score_volume(klines, index, triggers)
     score += vol_delta
     breakdown["volume"] = round(vol_delta, 2)
     confirms.extend(vol_notes)
     decision.detail["volume"] = vol_detail
-
-    # ── 第五层：大盘环境 ──
-    if market is None:
-        from .daily_pipeline import compute_market_context
-
-        try:
-            market = compute_market_context(decision.trade_date)
-        except Exception as exc:
-            logger.warning("大盘环境计算失败 %s: %s", decision.trade_date, exc)
-            market = {"market_dir": "NEUTRAL", "market_pct_chg": 0.0, "market_strength": 50.0}
-    decision.market = market
-    mkt_delta, mkt_notes = _score_market(market)
-    score += mkt_delta
-    breakdown["market"] = round(mkt_delta, 2)
-    confirms.extend(mkt_notes)
 
     # ── 主线归属（只挂载，不打分；第二阶段 select_final_picks 才用它）──
     try:
@@ -585,28 +662,146 @@ def confirm_buy_batch(
     market: dict[str, Any] | None = None,
     days: int = 150,
     theme_lookback: int | None = None,
-) -> list[BuyDecision]:
-    """批量买点确认。大盘环境只算一次，复用给所有票。"""
-    if market is None and trade_date:
-        from .daily_pipeline import compute_market_context
+    market_gate: str = DEFAULT_MARKET_GATE,
+) -> tuple[list[BuyDecision], str]:
+    """批量买点确认。
 
+    大盘门槛只判一次：不过关就直接返回空列表和拦截原因，一只票都不算
+    ——这正是把大盘挪到触发层之前的意义，全市场扫描能省掉整轮 K 线读取。
+
+    Returns:
+        (决策列表, 大盘拦截原因)。拦截原因非空时决策列表为空。
+    """
+    if market is None:
+        from .market_context import compute_market_context
+
+        target = trade_date or _latest_trade_date()
         try:
-            market = compute_market_context(trade_date)
+            market = compute_market_context(target)
         except Exception as exc:
-            logger.warning("大盘环境计算失败 %s: %s", trade_date, exc)
+            logger.warning("大盘环境计算失败 %s: %s", target, exc)
+
+    blocked = check_market_gate(market, market_gate)
+    if blocked:
+        return [], blocked
 
     out: list[BuyDecision] = []
     for code in codes:
         try:
             out.append(
-                confirm_buy(code, trade_date, market=market, days=days, theme_lookback=theme_lookback)
+                confirm_buy(
+                    code,
+                    trade_date,
+                    market=market,
+                    days=days,
+                    theme_lookback=theme_lookback,
+                    skip_market_gate=True,
+                )
             )
         except Exception as exc:
             logger.error("买点确认失败 %s: %s", code, exc)
             failed = BuyDecision(ts_code=code, trade_date=trade_date or "")
             failed.detail["error"] = str(exc)
             out.append(failed)
-    return out
+    return out, ""
+
+
+def scan_market(
+    trade_date: str | None = None,
+    *,
+    market_gate: str = DEFAULT_MARKET_GATE,
+    top_n: int = DEFAULT_TOP_N,
+    min_group_strength: float = DEFAULT_MIN_GROUP_STRENGTH,
+    max_per_group: int | None = None,
+    include_watch: bool = False,
+    limit: int = 0,
+    theme_lookback: int | None = None,
+    days: int = 150,
+    progress_every: int = 500,
+) -> dict[str, Any]:
+    """全市场扫描：大盘门槛 → 逐票 B1 确认 → 主线/行业筛选。
+
+    Args:
+        trade_date: 目标交易日；None 用库内最新
+        market_gate: 大盘门槛，见 MARKET_GATE_*
+        limit: 只扫前 N 只（调试用），0 = 全市场
+        其余参数见 select_final_picks
+
+    Returns:
+        {"trade_date", "market", "blocked", "scanned", "decisions",
+         "selection", "elapsed"}；blocked 非空时表示大盘未过关，未扫任何票。
+    """
+    import time
+
+    from .market_context import compute_market_context
+    from .universe import tradable_codes
+
+    started = time.perf_counter()
+    target = trade_date or _latest_trade_date()
+
+    result: dict[str, Any] = {
+        "trade_date": target,
+        "market": {},
+        "blocked": "",
+        "scanned": 0,
+        "decisions": [],
+        "selection": {},
+        "elapsed": 0.0,
+    }
+    if not target:
+        result["blocked"] = "库内没有任何日线数据"
+        return result
+
+    try:
+        market = compute_market_context(target)
+    except Exception as exc:
+        logger.warning("大盘环境计算失败 %s: %s", target, exc)
+        market = {}
+    result["market"] = market
+
+    # 大盘门槛：不过关就到此为止，不读任何 K 线
+    blocked = check_market_gate(market, market_gate)
+    if blocked:
+        result["blocked"] = blocked
+        result["elapsed"] = round(time.perf_counter() - started, 2)
+        return result
+
+    codes = tradable_codes(target)
+    if limit > 0:
+        codes = codes[:limit]
+    result["scanned"] = len(codes)
+
+    decisions: list[BuyDecision] = []
+    for i, code in enumerate(codes, start=1):
+        if progress_every and i % progress_every == 0:
+            logger.info("扫描进度 %d/%d，已命中 %d 只", i, len(codes), sum(1 for d in decisions if d.action == "BUY"))
+        try:
+            decisions.append(
+                confirm_buy(
+                    code,
+                    target,
+                    market=market,
+                    days=days,
+                    theme_lookback=theme_lookback,
+                    skip_market_gate=True,
+                )
+            )
+        except Exception as exc:
+            logger.warning("买点确认失败 %s: %s", code, exc)
+
+    selection = select_final_picks(
+        decisions,
+        top_n=top_n,
+        min_group_strength=min_group_strength,
+        max_per_group=max_per_group,
+        include_watch=include_watch,
+    )
+    apply_picks(decisions, selection)
+
+    result["decisions"] = decisions
+    result["selection"] = selection
+    result["elapsed"] = round(time.perf_counter() - started, 2)
+    return result
 
 
 # ==================== 第二阶段：主线/行业筛选 ====================
@@ -765,12 +960,20 @@ def format_final_picks(selection: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def save_buy_decisions(decisions: Sequence[BuyDecision]) -> int:
+def save_buy_decisions(decisions: Sequence[BuyDecision], *, only_actionable: bool = False) -> int:
     """落库 buy_decisions（INSERT OR REPLACE，重跑幂等）。
 
     只写有实际交易日的记录——拿不到数据日的决策写进去也没法复盘。
+
+    Args:
+        only_actionable: True 时只写 BUY/WATCH。全市场扫描一天产生 5000 条
+            决策，其中 99% 是"最近3日无 B1 信号"的 NONE，全写进去只是噪音。
     """
-    rows = [d.as_row() for d in decisions if d.trade_date]
+    rows = [
+        d.as_row()
+        for d in decisions
+        if d.trade_date and (not only_actionable or d.action in ("BUY", "WATCH"))
+    ]
     if not rows:
         return 0
     with get_connection() as conn:
@@ -845,4 +1048,66 @@ def format_buy_summary(decisions: Sequence[BuyDecision]) -> str:
     counts = {a: sum(1 for d in decisions if d.action == a) for a in ("BUY", "WATCH", "NONE")}
     lines.append("-" * 100)
     lines.append(f"合计 {len(decisions)} 只：买入 {counts['BUY']}  观察 {counts['WATCH']}  不买 {counts['NONE']}")
+    return "\n".join(lines)
+
+
+def format_scan_result(result: dict[str, Any], *, show_rejected: int = 15) -> str:
+    """全市场扫描结果的人类可读输出。"""
+    market = result.get("market") or {}
+    lines = [
+        "=" * 86,
+        f"全市场扫描  {result.get('trade_date', '')}   耗时 {result.get('elapsed', 0)}s",
+        "=" * 86,
+    ]
+
+    breadth = (market.get("detail") or {}).get("breadth") or {}
+    if market:
+        lines.append(
+            f"【大盘】{market.get('market_dir', '?')}  强度 {market.get('market_strength', 0)}  "
+            f"中位涨跌 {market.get('market_pct_chg', 0)}%"
+            + (
+                f"  |  {breadth.get('up', 0)}涨/{breadth.get('down', 0)}跌  "
+                f"涨停{breadth.get('limit_up', 0)}/跌停{breadth.get('limit_down', 0)}  "
+                f"样本{breadth.get('total', 0)}"
+                if breadth.get("available")
+                else ""
+            )
+        )
+
+    if result.get("blocked"):
+        lines.append("")
+        lines.append(f"  ✗ {result['blocked']}")
+        lines.append("  本次未扫描任何个股。")
+        return "\n".join(lines)
+
+    decisions = result.get("decisions") or []
+    counts = {a: sum(1 for d in decisions if d.action == a) for a in ("BUY", "WATCH", "NONE")}
+    stopped: dict[str, int] = {}
+    for d in decisions:
+        if d.action == "NONE":
+            key = str(d.detail.get("stopped_at") or "other")
+            stopped[key] = stopped.get(key, 0) + 1
+
+    lines.append(
+        f"【第一阶段】扫描 {result.get('scanned', 0)} 只 → "
+        f"BUY {counts['BUY']}  WATCH {counts['WATCH']}  NONE {counts['NONE']}"
+    )
+    label = {
+        "no_trigger": f"最近{FRESH_BARS}日无B1",
+        "veto": "一票否决",
+        "excluded": "不可交易",
+        "market_gate": "大盘门槛",
+        "other": "数据不足",
+    }
+    if stopped:
+        parts = (f"{label.get(k, k)} {v}" for k, v in sorted(stopped.items(), key=lambda x: -x[1]))
+        lines.append("  淘汰构成: " + "  ".join(parts))
+
+    selection = result.get("selection") or {}
+    lines.append("")
+    lines.append(format_final_picks({**selection, "rejected": (selection.get("rejected") or [])[:show_rejected]}))
+
+    total_rejected = len(selection.get("rejected") or [])
+    if total_rejected > show_rejected:
+        lines.append(f"  …另有 {total_rejected - show_rejected} 只落选未列出（--show-rejected 调整）")
     return "\n".join(lines)

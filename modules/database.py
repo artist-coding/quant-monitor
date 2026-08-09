@@ -661,33 +661,7 @@ def init_database(verbose: bool = True) -> None:
             ON index_daily(trade_date DESC)
         """)
 
-        # 14. 每日综合评分表（票池逐票评分结果落库）
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS daily_scores (
-                ts_code TEXT NOT NULL,
-                trade_date TEXT NOT NULL,
-                name TEXT,
-                score REAL,                      -- 综合总分
-                b1_score REAL,                   -- B1 买点得分
-                trend_score REAL,                -- 趋势得分
-                volume_score REAL,               -- 量能得分
-                risk_score REAL,                 -- 风险扣分
-                rating TEXT,                     -- 评级标签
-                market_dir TEXT,                 -- 大盘方向
-                market_pct_chg REAL,             -- 大盘涨跌幅
-                market_strength REAL,            -- 大盘强度
-                reasons TEXT,                    -- JSON 数组字符串：加分理由
-                warnings TEXT,                   -- JSON 数组字符串：风险提示
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (ts_code, trade_date)
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_daily_scores_date
-            ON daily_scores(trade_date DESC, score DESC)
-        """)
-
-        # 15. 主线（炒作题材）定义表
+        # 14. 主线（炒作题材）定义表
         #
         # 主线由**用户手工维护**——系统不自己判断"当前炒什么"，那需要新闻/情绪面
         # 数据，本地一概没有。这里只存用户给定的主线清单。
@@ -701,7 +675,7 @@ def init_database(verbose: bool = True) -> None:
             )
         """)
 
-        # 16. 主线成员表（股票 ↔ 主线）
+        # 15. 主线成员表（股票 ↔ 主线）
         #
         # 成员关系由**外部判定器**（用户本地的 kimi code + swarm）产出后导入，
         # 本系统不做"这只票属不属于该主线"的语义判断——没有题材数据源，
@@ -723,7 +697,7 @@ def init_database(verbose: bool = True) -> None:
             ON theme_members(ts_code)
         """)
 
-        # 17. 主线强度每日快照（本系统计算：主线之间的强弱排序）
+        # 16. 主线强度每日快照（本系统计算：主线之间的强弱排序）
         #
         # kind 区分两类分组：
         #   'theme'    — 用户定义的主线，成员来自 theme_members
@@ -754,7 +728,7 @@ def init_database(verbose: bool = True) -> None:
             ON theme_strength(trade_date DESC, kind, strength DESC)
         """)
 
-        # 18. 买点确认结果表（阶段1：日线买点三态决策的买入侧）
+        # 17. 买点确认结果表（全市场扫描的买入侧结论）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS buy_decisions (
                 ts_code TEXT NOT NULL,
@@ -793,7 +767,7 @@ def init_database(verbose: bool = True) -> None:
             {"pick_rank": "INTEGER DEFAULT 0", "pick_reason": "TEXT DEFAULT ''"},
         )
 
-        # 19. 自我改进系统跟踪表（tracking_tables.sql）
+        # 18. 自我改进系统跟踪表（tracking_tables.sql）
         init_tracking_tables(conn)
 
         if verbose:

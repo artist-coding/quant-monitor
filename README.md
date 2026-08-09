@@ -109,21 +109,31 @@ python3 -m modules.cli sync market-daily --date 20260717 --json
 成交额和涨跌幅；不会自动计算全市场技术指标。请不要在同一个数据库中混用
 未复权日线与旧的逐股前复权同步结果。
 
-Linux 服务器可使用仓库中的 systemd 配置，在每个工作日北京时间 16:30 执行；
-节假日会由交易日历自动跳过：
+### 选股流程（手动三步）
+
+每日编排器与它的 systemd 定时任务已移除——选股改为手动触发，
+三步各自独立、可单独重跑：
 
 ```bash
-sudo cp deploy/quant-monitor-daily-sync.service /etc/systemd/system/
-sudo cp deploy/quant-monitor-daily-sync.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now quant-monitor-daily-sync.timer
-systemctl list-timers quant-monitor-daily-sync.timer
+# 1. 同步当日全市场日线（大盘宽度与主线强度都从这里算）
+python3 -m modules.cli sync market-daily
+
+# 2. 刷新主线/行业强度排名
+python3 -m modules.cli theme rank --lookback 5
+
+# 3. 全市场扫描：大盘门槛 → B1 买点确认 → 主线/行业筛选
+python3 -m modules.cli scan --save
 ```
 
-运行日志可通过下面的命令查看：
+第 3 步的判定顺序是**大盘在最前**：大盘不过关直接停手，一只票都不扫。
+门槛默认 `neutral`（只在空头市场停手），`--market-gate long` 更严格，
+`--market-gate off` 完全不看大盘。
+
+主线成员由外部判定器产出后导入，系统只负责排强弱，
+格式见 [docs/theme-import-format.md](docs/theme-import-format.md)：
 
 ```bash
-journalctl -u quant-monitor-daily-sync.service -n 100 --no-pager
+python3 -m modules.cli theme import themes.json --replace
 ```
 
 运行测试：

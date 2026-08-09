@@ -15,7 +15,7 @@
     python -m modules.cli sync index --ts-code 000300.SH
     python -m modules.cli sync status
     python -m modules.cli sync stk-factor 600487.SH
-    python -m modules.cli daily-run --json
+    python -m modules.cli scan
 
 设计：所有命令通过 `zt` entry point（已在 pyproject.toml 注册）暴露。
 本文件取代 v2.9.0 散落在 5 个模块的独立 main()（screener / data_sync /
@@ -573,37 +573,6 @@ def cmd_sync(args):
                 print(f"  {s['data_type']}: {s.get('last_date', 'N/A')} ({s.get('status', 'N/A')})")
 
 
-def cmd_daily_run(args):
-    """每日收盘后全流程编排（同步 → 刷指标 → 评分落库）"""
-    import logging
-    from modules.daily_pipeline import format_pipeline_summary, run_daily_pipeline
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-    result = run_daily_pipeline(
-        trade_date=args.date,
-        skip_market=args.skip_market,
-        skip_index=args.skip_index,
-        skip_indicators=args.skip_indicators,
-        skip_scores=args.skip_scores,
-        skip_themes=args.skip_themes,
-        skip_buy=args.skip_buy,
-        watchlist_days=args.watchlist_days,
-        theme_lookback=args.theme_lookback,
-        pick_top_n=args.pick_top_n,
-        pick_min_group_strength=args.pick_min_strength,
-        pick_max_per_group=args.pick_max_per_group,
-    )
-
-    if args.json:
-        _json_output(result)
-    else:
-        print(format_pipeline_summary(result))
-
-    if result["status"] == "failed":
-        raise SystemExit(1)
-
-
 def cmd_theme(args):
     """主线（炒作题材）管理：成员由外部判定器导入，强弱由本系统排序"""
     import json as _json
@@ -713,7 +682,13 @@ def cmd_buy(args):
         print("没有可确认的股票：未指定代码且票池为空")
         return
 
-    decisions = confirm_buy_batch(codes, args.date, theme_lookback=args.theme_lookback)
+    decisions, blocked = confirm_buy_batch(
+        codes, args.date, theme_lookback=args.theme_lookback, market_gate=args.market_gate
+    )
+    if blocked:
+        print(f"大盘门槛未通过：{blocked}")
+        print("本次未判定任何个股。要忽略大盘请加 --market-gate off。")
+        return
     selection = select_final_picks(
         decisions,
         top_n=args.top_n,
@@ -763,6 +738,72 @@ def cmd_buy(args):
         print(format_final_picks(selection))
 
 
+def cmd_scan(args):
+    """全市场扫描：大盘门槛 → 逐票 B1 买点确认 → 主线/行业筛选"""
+    import logging
+
+    from modules.buy_decision import format_scan_result, save_buy_decisions, scan_market
+
+    if not args.json:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+
+    result = scan_market(
+        trade_date=args.date,
+        market_gate=args.market_gate,
+        top_n=args.top_n,
+        min_group_strength=args.min_strength,
+        max_per_group=args.max_per_group,
+        include_watch=args.include_watch,
+        limit=args.limit,
+        theme_lookback=args.theme_lookback,
+    )
+
+    if args.save and not result["blocked"]:
+        written = save_buy_decisions(result["decisions"], only_actionable=not args.save_all)
+        print(f"已落库 buy_decisions {written} 行\n")
+
+    if args.json:
+        selection = result.get("selection") or {}
+        _json_output(
+            {
+                "trade_date": result["trade_date"],
+                "market": result["market"],
+                "blocked": result["blocked"],
+                "scanned": result["scanned"],
+                "picks": [
+                    {
+                        "rank": e["rank"],
+                        "ts_code": e["decision"].ts_code,
+                        "name": e["decision"].name,
+                        "score": round(e["decision"].score, 2),
+                        "base_strategy": e["decision"].base_strategy,
+                        "group": e["group"],
+                        "group_kind": e["group_kind"],
+                        "group_strength": e["group_strength"],
+                        "triggers": e["decision"].triggers,
+                        "confirms": e["decision"].confirms,
+                    }
+                    for e in (selection.get("picks") or [])
+                ],
+                "rejected": [
+                    {
+                        "ts_code": e["decision"].ts_code,
+                        "name": e["decision"].name,
+                        "score": round(e["decision"].score, 2),
+                        "reason": e["reason"],
+                    }
+                    for e in (selection.get("rejected") or [])
+                ],
+            }
+        )
+        return
+
+    print(format_scan_result(result, show_rejected=args.show_rejected))
+
+    if result["blocked"]:
+        raise SystemExit(0)
+
+
 def build_parser():
     """构建并返回 zt CLI 的 ArgumentParser（支持独立导入测试）"""
     parser = argparse.ArgumentParser(
@@ -791,10 +832,9 @@ def build_parser():
   zt theme add 商业航天 --description "卫星互联网/火箭发射产业链"
   zt theme import themes.json --replace
   zt theme rank --lookback 5
-  zt buy
   zt buy 601360.SH --detail
-  zt daily-run
-  zt daily-run --date 20260807 --json
+  zt scan
+  zt scan --market-gate long --top-n 3
         """,
     )
 
@@ -904,28 +944,6 @@ def build_parser():
     p_daily = subparsers.add_parser("daily", help="每日五步工作流")
     p_daily.add_argument("--json", action="store_true", help="JSON输出")
 
-    # ── daily-run（每日收盘后全流程编排）──
-    p_daily_run = subparsers.add_parser("daily-run", help="每日收盘后全流程：同步 → 刷指标 → 评分落库")
-    p_daily_run.add_argument("--date", help="交易日期 YYYYMMDD，默认今天")
-    p_daily_run.add_argument("--json", action="store_true", help="JSON输出")
-    p_daily_run.add_argument("--skip-market", action="store_true", help="跳过全市场日线同步")
-    p_daily_run.add_argument("--skip-index", action="store_true", help="跳过宽基指数日线同步")
-    p_daily_run.add_argument("--skip-indicators", action="store_true", help="跳过票池 K 线补齐与指标缓存重算")
-    p_daily_run.add_argument("--skip-scores", action="store_true", help="跳过票池评分落库")
-    p_daily_run.add_argument("--skip-themes", action="store_true", help="跳过主线/行业强度排名")
-    p_daily_run.add_argument("--skip-buy", action="store_true", help="跳过票池买点确认")
-    p_daily_run.add_argument(
-        "--watchlist-days", type=int, default=250, help="票池指标缓存回溯天数（双线战法需 ≥115，默认 250）"
-    )
-    p_daily_run.add_argument("--theme-lookback", type=int, default=5, help="主线强度统计窗口（交易日，默认 5）")
-    p_daily_run.add_argument("--pick-top-n", type=int, default=5, help="第二阶段最终选股数上限（默认 5）")
-    p_daily_run.add_argument(
-        "--pick-min-strength", type=float, default=50.0, help="第二阶段主线/行业强度门槛（默认 50=中位行业）"
-    )
-    p_daily_run.add_argument(
-        "--pick-max-per-group", type=int, default=None, help="第二阶段每个主线/行业最多选几只（默认不限，允许集中）"
-    )
-
     # ── theme（主线管理）──
     p_theme = subparsers.add_parser("theme", help="主线（炒作题材）管理：成员外部导入，强弱本地排序")
     p_theme_sub = p_theme.add_subparsers(dest="theme_action", required=True)
@@ -982,7 +1000,33 @@ def build_parser():
         "--max-per-group", type=int, default=None, help="第二阶段每个主线/行业最多选几只（默认不限，允许集中）"
     )
     p_buy.add_argument("--include-watch", action="store_true", help="第二阶段把 WATCH 也纳入候选")
+    p_buy.add_argument(
+        "--market-gate",
+        choices=["long", "neutral", "off"],
+        default="neutral",
+        help="大盘门槛：long=只在多头选股 / neutral=空头才停手（默认）/ off=不判大盘",
+    )
     p_buy.add_argument("--json", action="store_true", help="JSON输出")
+
+    # ── scan（全市场扫描）──
+    p_scan = subparsers.add_parser("scan", help="全市场扫描：大盘门槛 → B1 买点确认 → 主线/行业筛选")
+    p_scan.add_argument("--date", help="交易日 YYYYMMDD，默认库内最新")
+    p_scan.add_argument(
+        "--market-gate",
+        choices=["long", "neutral", "off"],
+        default="neutral",
+        help="大盘门槛：long=只在多头选股 / neutral=空头才停手（默认）/ off=不判大盘",
+    )
+    p_scan.add_argument("--top-n", type=int, default=5, help="最终选股数上限（默认 5）")
+    p_scan.add_argument("--min-strength", type=float, default=50.0, help="主线/行业强度门槛（默认 50=中位行业）")
+    p_scan.add_argument("--max-per-group", type=int, default=None, help="每个主线/行业最多选几只（默认不限）")
+    p_scan.add_argument("--include-watch", action="store_true", help="把 WATCH 也纳入最终候选")
+    p_scan.add_argument("--theme-lookback", type=int, default=5, help="主线强度统计窗口（交易日，默认 5）")
+    p_scan.add_argument("--limit", type=int, default=0, help="只扫前 N 只（调试用），0=全市场")
+    p_scan.add_argument("--show-rejected", type=int, default=15, help="最多列出几只落选票")
+    p_scan.add_argument("--save", action="store_true", help="结果落库 buy_decisions（默认只写 BUY/WATCH）")
+    p_scan.add_argument("--save-all", action="store_true", help="与 --save 连用：把 NONE 也一并落库")
+    p_scan.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── monitor ──
     p_monitor = subparsers.add_parser("monitor", help="自选股主动预警与扫描推送")
@@ -1009,9 +1053,9 @@ def main():
         "diagnose": cmd_diagnose,
         "watchlist": cmd_watchlist,
         "sync": cmd_sync,
-        "daily-run": cmd_daily_run,
         "theme": cmd_theme,
         "buy": cmd_buy,
+        "scan": cmd_scan,
         "backtest": cmd_backtest,
         "trade": cmd_trade,
         "daily": cmd_daily,

@@ -40,7 +40,7 @@ VERIFY_TOKEN_URL = os.environ.get("TUSHARE_VERIFY_TOKEN_URL", "")
 # index_daily 表长期一行都没有的真正原因，而不是接口不可用。
 # 留 2 次余量给手动补数和失败重跑。
 #
-# 注意：大盘环境的**首选**数据源是全市场宽度（daily_pipeline.compute_market_breadth，
+# 注意：大盘环境的**首选**数据源是全市场宽度（market_context.compute_market_breadth，
 # 从 daily_kline 算，零 API 成本），指数只是补充。想加指数前先确认配额够用。
 DEFAULT_INDEXES: list[str] = [
     "000300.SH",  # 沪深300：覆盖大盘蓝筹，代表性最强

@@ -111,26 +111,33 @@ def test_score_macd_empty_is_neutral():
     assert bd._score_macd({}) == (0.0, [])
 
 
-def test_score_market_penalizes_short_more_than_it_rewards_long():
-    """不对称是有意的：宁可错过，不可在跌势里加仓。"""
-    long_delta, _ = bd._score_market({"market_dir": "LONG", "market_strength": 50})
-    short_delta, _ = bd._score_market({"market_dir": "SHORT", "market_strength": 50})
-    assert long_delta > 0 > short_delta
-    assert abs(short_delta) > long_delta
+@pytest.mark.parametrize(
+    "direction,gate,blocked",
+    [
+        ("LONG", "neutral", False),
+        ("NEUTRAL", "neutral", False),
+        ("SHORT", "neutral", True),
+        ("LONG", "long", False),
+        ("NEUTRAL", "long", True),
+        ("SHORT", "long", True),
+        ("SHORT", "off", False),
+    ],
+)
+def test_market_gate_matrix(direction, gate, blocked):
+    """大盘是门槛不是分数：不过关就整体停手。"""
+    reason = bd.check_market_gate({"market_dir": direction, "market_strength": 50}, gate)
+    assert bool(reason) is blocked
 
 
-def test_score_market_strength_tilt_is_capped():
-    hi, _ = bd._score_market({"market_dir": "NEUTRAL", "market_strength": 100})
-    lo, _ = bd._score_market({"market_dir": "NEUTRAL", "market_strength": 0})
-    assert hi == pytest.approx(bd._MARKET_STRENGTH_CAP)
-    assert lo == pytest.approx(-bd._MARKET_STRENGTH_CAP)
+def test_market_gate_allows_unknown_market():
+    """大盘算不出来是运维问题（当日没做全市场同步），不该被解读成"大盘不好"。"""
+    assert bd.check_market_gate(None) == ""
+    assert bd.check_market_gate({}) == ""
 
 
-def test_score_market_ignores_tiny_tilt():
-    """强度只偏离中性一点点时不写噪音进 confirms。"""
-    delta, notes = bd._score_market({"market_dir": "NEUTRAL", "market_strength": 52})
-    assert delta == 0.0
-    assert notes == []
+def test_market_gate_reason_carries_strength():
+    reason = bd.check_market_gate({"market_dir": "SHORT", "market_strength": 12.5})
+    assert "12.5" in reason
 
 
 def test_describe_theme_is_informational_only():
@@ -251,28 +258,6 @@ def test_short_market_can_demote_a_trigger(monkeypatch, temp_db):
     assert down.action != "BUY"
 
 
-def test_resonance_counts_distinct_strategies_only(monkeypatch, temp_db):
-    """同一战法连报三天是一个证据，不是三个。"""
-    same = [_trigger("B3", 0.6, "20260728"), _trigger("B3", 0.6, "20260729"), _trigger("B3", 0.6, "20260730")]
-    diff = [_trigger("B1", 0.6), _trigger("长安战法", 0.6), _trigger("娜娜图形", 0.6)]
-    kl = _make_klines(60)
-
-    _install(monkeypatch, triggers=same)
-    one = confirm_buy("600000.SH", klines=kl, market=NEUTRAL_MARKET)
-    _install(monkeypatch, triggers=diff)
-    three = confirm_buy("600000.SH", klines=kl, market=NEUTRAL_MARKET)
-
-    assert one.detail["breakdown"]["resonance"] == 0.0
-    assert three.detail["breakdown"]["resonance"] == pytest.approx(2 * bd._RESONANCE_PER_EXTRA)
-
-
-def test_resonance_is_capped(monkeypatch, temp_db):
-    many = [_trigger(f"战法{i}", 0.6) for i in range(10)]
-    _install(monkeypatch, triggers=many)
-    d = confirm_buy("600000.SH", klines=_make_klines(60), market=NEUTRAL_MARKET)
-    assert d.detail["breakdown"]["resonance"] == bd._RESONANCE_CAP
-
-
 def test_base_uses_highest_confidence_trigger(monkeypatch, temp_db):
     _install(monkeypatch, triggers=[_trigger("B1", 0.55), _trigger("SB1", 0.9)])
     d = confirm_buy("600000.SH", klines=_make_klines(60), market=NEUTRAL_MARKET)
@@ -304,7 +289,7 @@ def test_no_klines_returns_empty_decision(monkeypatch, temp_db):
 def test_future_date_falls_back_to_latest_bar(monkeypatch, temp_db):
     """目标日还没有数据时回退到最近一根，并如实带上那根的真实日期。
 
-    绝不能按目标日落库——阶段0 在 daily_scores 上踩过这个坑：
+    绝不能按目标日落库——踩过这个坑：
     日期存疑的脏行永远不会被正确重跑覆盖。
     """
     _install(monkeypatch, triggers=[_trigger("B1", 0.7)])
@@ -327,7 +312,8 @@ def test_insufficient_history_is_reported(monkeypatch, temp_db):
     _register()
     d = confirm_buy("600000.SH", klines=_make_klines(10), market=NEUTRAL_MARKET)
     assert d.action == "NONE"
-    assert "不足以检测战法" in d.detail["reason"]
+    assert "无法完整判定" in d.detail["reason"]
+    assert str(bd._MIN_BARS) in d.detail["reason"]
 
 
 def test_historical_date_uses_that_bar(monkeypatch, temp_db):
@@ -392,7 +378,8 @@ def test_batch_survives_single_stock_failure(monkeypatch, temp_db):
         return real(ts_code, *a, **kw)
 
     monkeypatch.setattr(bd, "confirm_buy", _flaky)
-    out = bd.confirm_buy_batch(["BOOM.SH", "600000.SH"], "20260807", market=NEUTRAL_MARKET)
+    out, blocked = bd.confirm_buy_batch(["BOOM.SH", "600000.SH"], "20260807", market=NEUTRAL_MARKET)
+    assert blocked == ""
     assert len(out) == 2
     assert out[0].detail["error"] == "模拟异常"
 
@@ -657,3 +644,207 @@ def test_exclusion_happens_before_any_analysis(monkeypatch, temp_db):
 
     confirm_buy("000010.SZ", klines=_make_klines(60), market=NEUTRAL_MARKET)
     assert called == []
+
+
+# ==================== 大盘门槛在触发之前 ====================
+
+
+def test_short_market_blocks_before_reading_klines(monkeypatch, temp_db):
+    """大盘不过关时一根 K 线都不该读——这正是把门槛前移的意义。"""
+    _register()
+    touched = []
+    monkeypatch.setattr(bd, "_collect_vetoes", lambda k, i: touched.append("veto") or ([], {}))
+    monkeypatch.setattr(bd, "_collect_triggers", lambda k, i: touched.append("trigger") or [])
+    monkeypatch.setattr(bd, "attach_mdc_fields", lambda k: touched.append("mdc"))
+
+    d = confirm_buy(
+        "600000.SH",
+        klines=_make_klines(60),
+        market={"market_dir": "SHORT", "market_strength": 20},
+    )
+    assert d.action == "NONE"
+    assert d.detail["stopped_at"] == "market_gate"
+    assert "大盘门槛未通过" in d.vetoes[0]
+    assert touched == [], "大盘不过关时不应做任何个股分析"
+    # 不落库：这不是"某一天对这只票的判断"
+    assert d.trade_date == ""
+    assert save_buy_decisions([d]) == 0
+
+
+def test_market_gate_does_not_add_score(monkeypatch, temp_db):
+    """门槛通过后不再给分——它已履职，再叠一次就是重复计算。"""
+    _install(monkeypatch, triggers=[_trigger("B1", 0.7)])
+    kl = _make_klines(60)
+    strong = confirm_buy("600000.SH", klines=kl, market={"market_dir": "LONG", "market_strength": 95})
+    weak = confirm_buy("600000.SH", klines=kl, market={"market_dir": "NEUTRAL", "market_strength": 45})
+    assert strong.score == weak.score
+    assert "market" not in strong.detail["breakdown"]
+
+
+def test_long_gate_blocks_neutral_market(monkeypatch, temp_db):
+    _register()
+    _install(monkeypatch, triggers=[_trigger("B1", 0.9)])
+    d = confirm_buy(
+        "600000.SH",
+        klines=_make_klines(60),
+        market={"market_dir": "NEUTRAL", "market_strength": 55},
+        market_gate=bd.MARKET_GATE_LONG,
+    )
+    assert d.action == "NONE"
+    assert d.detail["stopped_at"] == "market_gate"
+
+
+def test_batch_short_circuits_on_bad_market(temp_db):
+    """批量扫描时门槛只判一次，不过关直接返回空表和原因。"""
+    decisions, blocked = bd.confirm_buy_batch(
+        ["600000.SH", "600519.SH"], "20260807", market={"market_dir": "SHORT", "market_strength": 10}
+    )
+    assert decisions == []
+    assert "大盘偏空" in blocked
+
+
+# ==================== 触发层只留 B1 ====================
+
+
+def test_only_b1_is_a_trigger(temp_db, monkeypatch):
+    """B2/B3/SB1 与复合战法都不再触发买点。"""
+    import modules.strategies.base_strategies as base
+    import modules.strategies.compound_strategies as comp
+
+    called = []
+    for mod, names in ((base, ["detect_b2", "detect_b3", "detect_sb1"]),
+                       (comp, ["detect_changan", "detect_nana", "detect_kengqi"])):
+        for n in names:
+            if hasattr(mod, n):
+                monkeypatch.setattr(mod, n, lambda *a, **kw: called.append(1) or None)
+
+    monkeypatch.setattr(base, "detect_b1", lambda *a, **kw: None)
+    bd._collect_triggers(_make_klines(60), 59)
+    assert called == [], "触发层不应再调用 B1 以外的战法"
+
+
+def test_trigger_uses_b1_only_label(monkeypatch, temp_db):
+    from modules.strategies.core import Action, Priority, StrategySignal, StrategyType
+    import modules.strategies.base_strategies as base
+
+    def _fake_b1(klines, index, kirin_context=None):
+        if index != 59:
+            return None
+        return StrategySignal(
+            ts_code="600000.SH",
+            trade_date=klines[index].trade_date,
+            strategy=StrategyType.B1,
+            confidence=0.75,
+            description="B1买点 J=-15.00",
+            action=Action.BUY.value,
+            priority=Priority.OPPORTUNITY,
+        )
+
+    monkeypatch.setattr(base, "detect_b1", _fake_b1)
+    triggers = bd._collect_triggers(_make_klines(60), 59)
+    assert len(triggers) == 1
+    assert triggers[0]["strategy"] == "B1"
+    assert triggers[0]["confidence"] == 0.75
+
+
+def test_no_trigger_message_mentions_b1(monkeypatch, temp_db):
+    _install(monkeypatch, triggers=[])
+    d = confirm_buy("600000.SH", klines=_make_klines(60), market=NEUTRAL_MARKET)
+    assert "B1" in d.detail["reason"]
+
+
+# ==================== MDC 现算 ====================
+
+
+def test_attach_mdc_fills_indicator_fields(temp_db):
+    """全市场扫描不能依赖 indicator_cache（只覆盖票池 7 只票），必须现算。"""
+    import random
+
+    random.seed(7)
+    kl = _make_klines(60)
+    price = 10.0
+    for k in kl:  # 造点波动，否则布林带宽为 0、DMI 无定义
+        price *= 1 + random.uniform(-0.03, 0.03)
+        k.open = k.close = round(price, 2)
+        k.high = round(price * 1.02, 2)
+        k.low = round(price * 0.98, 2)
+
+    assert kl[-1].boll_lower is None and kl[-1].adx is None
+
+    bd.attach_mdc_fields(kl)
+
+    last = kl[-1]
+    assert last.boll_lower is not None and last.boll_upper is not None
+    assert last.boll_lower < last.boll_mid < last.boll_upper
+    assert last.rsi6 is not None and 0 <= last.rsi6 <= 100
+    assert last.adx is not None
+
+
+def test_attach_mdc_is_safe_on_short_series(temp_db):
+    """样本不足时保持 None，不能填 0——0 会被 B1 当成"有数据"参与比较。"""
+    kl = _make_klines(15)
+    bd.attach_mdc_fields(kl)
+    assert kl[-1].boll_lower is None
+    assert kl[-1].adx is None
+
+
+# ==================== 全市场扫描 ====================
+
+
+def test_scan_market_blocked_by_gate(temp_db, monkeypatch):
+    import modules.market_context as mc
+
+    monkeypatch.setattr(mc, "compute_market_context", lambda d: {"market_dir": "SHORT", "market_strength": 8})
+    monkeypatch.setattr(bd, "_latest_trade_date", lambda: "20260807")
+
+    res = bd.scan_market()
+    assert res["blocked"]
+    assert res["scanned"] == 0
+    assert res["decisions"] == []
+    assert "大盘偏空" in bd.format_scan_result(res)
+
+
+def test_scan_market_reports_empty_db(temp_db):
+    res = bd.scan_market()
+    assert res["blocked"] == "库内没有任何日线数据"
+
+
+def test_scan_market_runs_full_funnel(temp_db, monkeypatch):
+    """大盘放行时走完两阶段，并回填 pick_rank。"""
+    import modules.market_context as mc
+    import modules.universe as uni
+
+    monkeypatch.setattr(mc, "compute_market_context", lambda d: {"market_dir": "LONG", "market_strength": 80})
+    monkeypatch.setattr(bd, "_latest_trade_date", lambda: "20260807")
+    monkeypatch.setattr(uni, "tradable_codes", lambda d=None: ["A.SZ", "B.SZ"])
+
+    def _fake_confirm(code, date, **kw):
+        return BuyDecision(
+            ts_code=code,
+            trade_date="20260807",
+            name=code,
+            action="BUY",
+            score=80.0 if code == "A.SZ" else 70.0,
+            base_strategy="B1",
+            theme={"theme": "强主线", "kind": "theme", "strength": 85.0, "rank": 1},
+        )
+
+    monkeypatch.setattr(bd, "confirm_buy", _fake_confirm)
+
+    res = bd.scan_market()
+    assert res["blocked"] == ""
+    assert res["scanned"] == 2
+    assert [e["decision"].ts_code for e in res["selection"]["picks"]] == ["A.SZ", "B.SZ"]
+    assert res["decisions"][0].pick_rank in (1, 2)
+    text = bd.format_scan_result(res)
+    assert "全市场扫描" in text and "强主线" in text
+
+
+def test_save_only_actionable_skips_none(temp_db):
+    ds = [
+        BuyDecision(ts_code="A.SZ", trade_date="20260807", action="BUY", score=80),
+        BuyDecision(ts_code="B.SZ", trade_date="20260807", action="WATCH", score=50),
+        BuyDecision(ts_code="C.SZ", trade_date="20260807", action="NONE", score=0),
+    ]
+    assert bd.save_buy_decisions(ds, only_actionable=True) == 2
+    assert bd.save_buy_decisions(ds) == 3
