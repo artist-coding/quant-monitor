@@ -590,6 +590,9 @@ def cmd_daily_run(args):
         skip_buy=args.skip_buy,
         watchlist_days=args.watchlist_days,
         theme_lookback=args.theme_lookback,
+        pick_top_n=args.pick_top_n,
+        pick_min_group_strength=args.pick_min_strength,
+        pick_max_per_group=args.pick_max_per_group,
     )
 
     if args.json:
@@ -692,10 +695,13 @@ def cmd_theme(args):
 def cmd_buy(args):
     """买点确认：大盘环境 + 日线买点战法 + MACD + 成交量 + 主线"""
     from modules.buy_decision import (
+        apply_picks,
         confirm_buy_batch,
         format_buy_decision,
         format_buy_summary,
+        format_final_picks,
         save_buy_decisions,
+        select_final_picks,
     )
 
     codes = [c.strip().upper() for c in args.codes.split(",") if c.strip()] if args.codes else []
@@ -708,6 +714,14 @@ def cmd_buy(args):
         return
 
     decisions = confirm_buy_batch(codes, args.date, theme_lookback=args.theme_lookback)
+    selection = select_final_picks(
+        decisions,
+        top_n=args.top_n,
+        min_group_strength=args.min_strength,
+        max_per_group=args.max_per_group,
+        include_watch=args.include_watch,
+    )
+    apply_picks(decisions, selection)
     if args.save:
         written = save_buy_decisions(decisions)
         print(f"已落库 buy_decisions {written} 行\n")
@@ -728,6 +742,8 @@ def cmd_buy(args):
                     "vetoes": d.vetoes,
                     "market": d.market,
                     "theme": d.theme,
+                    "pick_rank": d.pick_rank,
+                    "pick_reason": d.pick_reason,
                     "detail": d.detail,
                 }
                 for d in decisions
@@ -741,6 +757,10 @@ def cmd_buy(args):
             print()
     else:
         print(format_buy_summary(decisions))
+
+    if len(decisions) > 1:
+        print()
+        print(format_final_picks(selection))
 
 
 def build_parser():
@@ -898,6 +918,13 @@ def build_parser():
         "--watchlist-days", type=int, default=250, help="票池指标缓存回溯天数（双线战法需 ≥115，默认 250）"
     )
     p_daily_run.add_argument("--theme-lookback", type=int, default=5, help="主线强度统计窗口（交易日，默认 5）")
+    p_daily_run.add_argument("--pick-top-n", type=int, default=5, help="第二阶段最终选股数上限（默认 5）")
+    p_daily_run.add_argument(
+        "--pick-min-strength", type=float, default=50.0, help="第二阶段主线/行业强度门槛（默认 50=中位行业）"
+    )
+    p_daily_run.add_argument(
+        "--pick-max-per-group", type=int, default=None, help="第二阶段每个主线/行业最多选几只（默认不限，允许集中）"
+    )
 
     # ── theme（主线管理）──
     p_theme = subparsers.add_parser("theme", help="主线（炒作题材）管理：成员外部导入，强弱本地排序")
@@ -947,6 +974,14 @@ def build_parser():
     p_buy.add_argument("--detail", action="store_true", help="多只票时也逐只展开详情")
     p_buy.add_argument("--save", action="store_true", help="结果落库 buy_decisions")
     p_buy.add_argument("--theme-lookback", type=int, default=5, help="主线强度统计窗口（交易日，默认 5）")
+    p_buy.add_argument("--top-n", type=int, default=5, help="第二阶段最终选股数上限（默认 5）")
+    p_buy.add_argument(
+        "--min-strength", type=float, default=50.0, help="第二阶段主线/行业强度门槛（默认 50=中位行业）"
+    )
+    p_buy.add_argument(
+        "--max-per-group", type=int, default=None, help="第二阶段每个主线/行业最多选几只（默认不限，允许集中）"
+    )
+    p_buy.add_argument("--include-watch", action="store_true", help="第二阶段把 WATCH 也纳入候选")
     p_buy.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── monitor ──

@@ -982,3 +982,112 @@ def test_pipeline_warns_about_dropped_themes(monkeypatch, temp_db):
 
     result = run_daily_pipeline("20260807", skip_buy=True)
     assert any("主线未参与排名" in w and "太小的主线" in w for w in result["warnings"])
+
+
+# ==================== 阶段1 第二阶段：主线/行业筛选 ====================
+
+
+def _fake_buy(monkeypatch, decisions):
+    """替换第一阶段，直接给定决策，专测编排器里的第二阶段接线。"""
+    import modules.buy_decision as bd_mod
+
+    monkeypatch.setattr(bd_mod, "confirm_buy_batch", lambda *a, **kw: list(decisions))
+
+
+def _decision(code, score, group, strength, kind="theme", action="BUY"):
+    from modules.buy_decision import BuyDecision
+
+    return BuyDecision(
+        ts_code=code,
+        trade_date="20260807",
+        name=code,
+        action=action,
+        score=score,
+        base_strategy="B1",
+        theme={"theme": group, "kind": kind, "strength": strength, "rank": 1},
+    )
+
+
+def test_pipeline_runs_second_stage_and_persists_pick_rank(monkeypatch, temp_db):
+    from modules.database import get_connection
+
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer, codes=("600487.SH", "600519.SH"))
+    _fake_buy(
+        monkeypatch,
+        [
+            _decision("600487.SH", 70.0, "强主线", 90.0),
+            _decision("600519.SH", 95.0, "弱主线", 20.0),
+        ],
+    )
+
+    result = run_daily_pipeline("20260807")
+
+    # 强主线里的低分票入选，弱主线里的高分票落选
+    assert [p["ts_code"] for p in result["final_picks"]] == ["600487.SH"]
+    with get_connection() as conn:
+        ranks = dict(conn.execute("SELECT ts_code, pick_rank FROM buy_decisions").fetchall())
+    assert ranks["600487.SH"] == 1
+    assert ranks["600519.SH"] == 0
+
+
+def test_pipeline_warns_about_buy_that_missed_the_cut(monkeypatch, temp_db):
+    """买点成立却被板块判断刷掉的票必须报出来，不能看起来像"根本没通过买点确认"。"""
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer, codes=("600487.SH",))
+    _fake_buy(monkeypatch, [_decision("600487.SH", 95.0, "弱主线", 10.0)])
+
+    result = run_daily_pipeline("20260807")
+
+    assert result["final_picks"] == []
+    assert any("买点成立" in w and "未入选" in w for w in result["warnings"])
+
+
+def test_pipeline_pick_params_are_threaded_through(monkeypatch, temp_db):
+    syncer = FakeSyncer()
+    codes = tuple(f"6000{i:02d}.SH" for i in range(4))
+    _install_fake_pipeline(monkeypatch, syncer, codes=codes)
+    _fake_buy(monkeypatch, [_decision(c, 80.0, "同一条主线", 90.0) for c in codes])
+
+    capped = run_daily_pipeline("20260807", pick_top_n=2)
+    assert len(capped["final_picks"]) == 2
+
+    diversified = run_daily_pipeline("20260807", pick_max_per_group=1)
+    assert len(diversified["final_picks"]) == 1
+
+    strict = run_daily_pipeline("20260807", pick_min_group_strength=95.0)
+    assert strict["final_picks"] == []
+
+
+def test_summary_renders_final_picks(monkeypatch, temp_db):
+    from modules.daily_pipeline import format_pipeline_summary
+
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer, codes=("600487.SH",))
+    _fake_buy(monkeypatch, [_decision("600487.SH", 80.0, "商业航天", 90.0)])
+
+    text = format_pipeline_summary(run_daily_pipeline("20260807"))
+    assert "最终选股" in text
+    assert "商业航天" in text
+
+
+def test_cli_daily_run_pick_flags():
+    args = _parse("daily-run", "--pick-top-n", "3", "--pick-min-strength", "60", "--pick-max-per-group", "1")
+    assert args.pick_top_n == 3
+    assert args.pick_min_strength == 60.0
+    assert args.pick_max_per_group == 1
+
+
+def test_cli_daily_run_pick_defaults():
+    args = _parse("daily-run")
+    assert args.pick_top_n == 5
+    assert args.pick_min_strength == 50.0
+    assert args.pick_max_per_group is None
+
+
+def test_cli_buy_pick_flags():
+    args = _parse("buy", "--top-n", "3", "--min-strength", "70", "--max-per-group", "2", "--include-watch")
+    assert args.top_n == 3
+    assert args.min_strength == 70.0
+    assert args.max_per_group == 2
+    assert args.include_watch is True

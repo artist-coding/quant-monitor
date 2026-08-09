@@ -247,6 +247,31 @@ def init_tracking_tables(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _add_missing_columns(conn, table: str, columns: dict[str, str]) -> list[str]:
+    """给已存在的表补齐缺失的列（幂等）。
+
+    ``CREATE TABLE IF NOT EXISTS`` 对已经建好的表是空操作，加不了新列——
+    给旧库补字段只能靠 ALTER TABLE。这里按 PRAGMA table_info 做差集，
+    只补真正缺的，可以反复执行。
+
+    Args:
+        table: 表名
+        columns: {列名: 列定义}，如 {"pick_rank": "INTEGER DEFAULT 0"}
+
+    Returns:
+        实际新增的列名列表
+    """
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if not existing:  # 表还不存在，交给 CREATE TABLE 处理
+        return []
+    added = []
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+            added.append(name)
+    return added
+
+
 def init_database(verbose: bool = True) -> None:
     """初始化数据库，创建所有表。``verbose=False`` 用于 JSON/后台任务。"""
     with get_connection() as conn:
@@ -747,6 +772,10 @@ def init_database(verbose: bool = True) -> None:
                 theme TEXT,                      -- 归属的最强主线（无则空）
                 theme_strength REAL,
                 theme_rank INTEGER,
+                -- 第二阶段（行业/主线筛选）的入选名次，1 起；0 = 未入选。
+                -- 留着是为了日后归因：入选的那几只是不是真的比落选的 BUY 走得好。
+                pick_rank INTEGER DEFAULT 0,
+                pick_reason TEXT DEFAULT '',     -- 入选或落选的原因
                 detail TEXT,                     -- JSON：完整计算依据，便于复盘归因
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (ts_code, trade_date)
@@ -756,6 +785,13 @@ def init_database(verbose: bool = True) -> None:
             CREATE INDEX IF NOT EXISTS idx_buy_decisions_date
             ON buy_decisions(trade_date DESC, action, score DESC)
         """)
+        # buy_decisions 在上一个版本里就已建表，pick_rank/pick_reason 是后加的，
+        # 旧库靠 CREATE TABLE IF NOT EXISTS 补不上，走 ALTER。
+        _add_missing_columns(
+            conn,
+            "buy_decisions",
+            {"pick_rank": "INTEGER DEFAULT 0", "pick_reason": "TEXT DEFAULT ''"},
+        )
 
         # 19. 自我改进系统跟踪表（tracking_tables.sql）
         init_tracking_tables(conn)

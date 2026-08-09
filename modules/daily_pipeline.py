@@ -417,6 +417,9 @@ def run_daily_pipeline(
     skip_buy: bool = False,
     watchlist_days: int = 250,
     theme_lookback: int = 5,
+    pick_top_n: int = 5,
+    pick_min_group_strength: float = 50.0,
+    pick_max_per_group: int | None = None,
 ) -> dict[str, Any]:
     """执行每日收盘后全流程。
 
@@ -432,10 +435,13 @@ def run_daily_pipeline(
             需要 ≥115 根 K 线，而 sync_indicator_cache 逐日重算，前 115 行的
             双线字段必然为 0，250 天可留出约 135 行可用数据。
         theme_lookback: 主线强度的统计窗口（交易日）
+        pick_top_n: 第二阶段最多选几只
+        pick_min_group_strength: 第二阶段的主线/行业强度门槛
+        pick_max_per_group: 第二阶段每个主线/行业最多选几只（None=不限，允许集中）
 
     Returns:
         结构化摘要 dict，含 status / trade_date / steps / market /
-        top_scores / theme_ranking / buy_decisions / errors
+        top_scores / theme_ranking / buy_decisions / final_picks / errors
     """
     started = time.perf_counter()
     raw_target = (trade_date or datetime.now().strftime("%Y%m%d")).strip()
@@ -457,6 +463,7 @@ def run_daily_pipeline(
             "top_scores": [],
             "theme_ranking": {},
             "buy_decisions": [],
+            "final_picks": [],
             "warnings": [],
             "errors": [f"交易日期格式错误: {exc}"],
         }
@@ -473,6 +480,7 @@ def run_daily_pipeline(
         "top_scores": [],
         "theme_ranking": {},
         "buy_decisions": [],
+        "final_picks": [],
         "warnings": [],
         "errors": [],
     }
@@ -803,17 +811,52 @@ def run_daily_pipeline(
         step.update(status="skipped", message="票池为空")
     else:
         try:
-            from .buy_decision import confirm_buy_batch, save_buy_decisions
+            from .buy_decision import apply_picks, confirm_buy_batch, save_buy_decisions, select_final_picks
 
             decisions = confirm_buy_batch(codes, target, market=market, theme_lookback=theme_lookback)
+
+            # 第二阶段：从 BUY 里按主线/行业强弱挑最终标的。
+            # 必须在落库之前——pick_rank 要跟决策写在同一行，日后才能归因
+            # "入选的那几只是不是真的比落选的 BUY 走得好"。
+            selection = select_final_picks(
+                decisions,
+                top_n=pick_top_n,
+                min_group_strength=pick_min_group_strength,
+                max_per_group=pick_max_per_group,
+            )
+            apply_picks(decisions, selection)
+
             written = save_buy_decisions(decisions)
             counts = {a: sum(1 for d in decisions if d.action == a) for a in ("BUY", "WATCH", "NONE")}
             step.update(
                 status="success",
                 rows=written,
-                message=f"买入 {counts['BUY']}  观察 {counts['WATCH']}  不买 {counts['NONE']}",
+                message=(
+                    f"买入 {counts['BUY']}  观察 {counts['WATCH']}  不买 {counts['NONE']}"
+                    f"  → 最终选出 {len(selection['picks'])} 只"
+                ),
             )
             step["counts"] = counts
+            result["final_picks"] = [
+                {
+                    "rank": e["rank"],
+                    "ts_code": e["decision"].ts_code,
+                    "name": e["decision"].name,
+                    "score": round(e["decision"].score, 2),
+                    "base_strategy": e["decision"].base_strategy,
+                    "group": e["group"],
+                    "group_kind": e["group_kind"],
+                    "group_strength": e["group_strength"],
+                }
+                for e in selection["picks"]
+            ]
+            # BUY 却没入选的要报出来：这是"系统认为可以买、但被板块判断刷掉"的票，
+            # 静默丢掉会让人以为它根本没通过买点确认。
+            for e in selection["rejected"]:
+                if e["decision"].action == "BUY":
+                    result["warnings"].append(
+                        f"{e['decision'].ts_code} 买点成立（{e['decision'].score:.1f}）但未入选: {e['reason']}"
+                    )
             # 买点确认和评分一样，用的是每只票库里的真实数据日；数据没同步上来时
             # 决策日会早于 target。落库按真实日期，这里把不一致如实报出来。
             drifted = [f"{d.ts_code}@{d.trade_date}" for d in decisions if d.trade_date and d.trade_date != target]
@@ -918,6 +961,18 @@ def format_pipeline_summary(result: dict[str, Any]) -> str:
                 theme += "(行业)"
             tail = b["vetoes"][0] if b["vetoes"] else f"{b['base_strategy']} · 主线{theme}"
             lines.append(f"  {b['action']:<6} {b['ts_code']:<12} {b['name']:<8} {b['score']:>6.1f}  {tail}")
+
+    picks = result.get("final_picks") or []
+    if picks:
+        lines.append("\n【最终选股 · 按主线/行业强弱】")
+        for p in picks:
+            group = p["group"] + ("(行业)" if p["group_kind"] == "industry" else "")
+            lines.append(
+                f"  #{p['rank']} {p['ts_code']:<12} {p['name']:<8} 确认分{p['score']:>6.1f}  "
+                f"{group}(强度{p['group_strength']:.1f})  {p['base_strategy']}"
+            )
+    elif buys and any(b["action"] == "BUY" for b in buys):
+        lines.append("\n【最终选股】买点成立的票均未通过主线/行业筛选（详见警告）")
 
     warnings = result.get("warnings") or []
     if warnings:

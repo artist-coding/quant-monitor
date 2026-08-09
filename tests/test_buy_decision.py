@@ -121,25 +121,21 @@ def test_score_market_ignores_tiny_tilt():
     assert notes == []
 
 
-def test_score_theme_scales_with_strength():
-    strong, _ = bd._score_theme({"theme": "A", "kind": "theme", "strength": 100, "rank": 1, "total": 10})
-    weak, _ = bd._score_theme({"theme": "B", "kind": "theme", "strength": 0, "rank": 10, "total": 10})
-    mid, _ = bd._score_theme({"theme": "C", "kind": "theme", "strength": 50, "rank": 5, "total": 10})
-    assert strong == pytest.approx(bd._THEME_WEIGHT)
-    assert weak == pytest.approx(-bd._THEME_WEIGHT)
-    assert mid == pytest.approx(0.0)
+def test_describe_theme_is_informational_only():
+    """主线只挂说明、不打分——它属于第二阶段。"""
+    notes = bd._describe_theme({"theme": "商业航天", "kind": "theme", "strength": 92.0, "rank": 1, "total": 8})
+    assert len(notes) == 1
+    assert "商业航天" in notes[0]
+    assert "不计入确认分" in notes[0]
 
 
-def test_score_theme_industry_fallback_weighs_less():
-    """行业只是兜底参照，不是真正的炒作主线，权重必须小于主线。"""
-    theme, _ = bd._score_theme({"theme": "A", "kind": "theme", "strength": 100, "rank": 1, "total": 5})
-    industry, notes = bd._score_theme({"theme": "A", "kind": "industry", "strength": 100, "rank": 1, "total": 5})
-    assert industry < theme
+def test_describe_theme_marks_industry_fallback():
+    notes = bd._describe_theme({"theme": "半导体", "kind": "industry", "strength": 60.0, "rank": 3, "total": 90})
     assert "行业(兜底)" in notes[0]
 
 
-def test_score_theme_none_is_neutral():
-    assert bd._score_theme(None) == (0.0, [])
+def test_describe_theme_none_is_empty():
+    assert bd._describe_theme(None) == []
 
 
 def test_score_volume_rewards_attack(monkeypatch):
@@ -405,7 +401,17 @@ def test_format_summary_counts_actions(temp_db):
     text = bd.format_buy_summary(ds)
     assert "买入 1" in text and "观察 1" in text and "不买 1" in text
     # BUY 必须排在最前
-    assert text.index("\nA ") < text.index("\nB ") < text.index("\nC ")
+    assert text.index("A ") < text.index("B ") < text.index("C ")
+
+
+def test_format_summary_marks_final_picks():
+    """入选第二阶段的票要在汇总表里带 #名次。"""
+    ds = [
+        BuyDecision(ts_code="A", action="BUY", score=80, pick_rank=1),
+        BuyDecision(ts_code="B", action="BUY", score=70),
+    ]
+    lines = bd.format_buy_summary(ds).splitlines()
+    assert any(line.startswith("#1 ") for line in lines)
 
 
 def test_format_summary_marks_industry_fallback(temp_db):
@@ -413,3 +419,151 @@ def test_format_summary_marks_industry_fallback(temp_db):
         ts_code="A", action="BUY", score=70, theme={"theme": "半导体", "kind": "industry", "strength": 80}
     )
     assert "(行业)" in bd.format_buy_summary([d])
+
+
+# ==================== 第二阶段：主线/行业筛选 ====================
+
+
+def _buy(code, score, group="默认主线", kind="theme", strength=70.0, action="BUY"):
+    """造一条已完成第一阶段的决策。group=None 表示没有任何主线/行业归属。"""
+    return BuyDecision(
+        ts_code=code,
+        trade_date="20260807",
+        name=code,
+        action=action,
+        score=score,
+        base_strategy="B1",
+        theme=None if group is None else {"theme": group, "kind": kind, "strength": strength, "rank": 1},
+    )
+
+
+def test_theme_no_longer_affects_first_stage_score(monkeypatch, temp_db):
+    """主线强度不得再影响买点确认分——否则一条强主线能把不合格的买点推过阈值。"""
+    _install(monkeypatch, triggers=[_trigger("B1", 0.6)])
+    kl = _make_klines(60)
+
+    def _theme(code, date, lookback):
+        return {"theme": "超强主线", "kind": "theme", "strength": 100.0, "rank": 1, "total": 9}
+
+    import modules.themes as th_mod
+
+    monkeypatch.setattr(th_mod, "get_stock_theme_strength", _theme)
+    strong = confirm_buy("600000.SH", klines=kl, market=NEUTRAL_MARKET)
+
+    monkeypatch.setattr(th_mod, "get_stock_theme_strength", lambda *a, **kw: None)
+    none_theme = confirm_buy("600000.SH", klines=kl, market=NEUTRAL_MARKET)
+
+    assert strong.score == none_theme.score
+    assert "theme" not in strong.detail["breakdown"]
+    # 但主线信息本身要留着，供第二阶段和展示用
+    assert strong.theme["theme"] == "超强主线"
+
+
+def test_select_only_considers_buy_by_default(temp_db):
+    ds = [_buy("A", 80), _buy("B", 50, action="WATCH"), _buy("C", 0, action="NONE")]
+    sel = bd.select_final_picks(ds, min_group_strength=0)
+    assert sel["candidates"] == 1
+    assert [e["decision"].ts_code for e in sel["picks"]] == ["A"]
+
+
+def test_select_can_include_watch(temp_db):
+    ds = [_buy("A", 80), _buy("B", 50, action="WATCH")]
+    sel = bd.select_final_picks(ds, min_group_strength=0, include_watch=True)
+    assert sel["candidates"] == 2
+
+
+def test_select_sorts_by_group_strength_first(temp_db):
+    """同一条强主线里的第二名，好过一条弱主线里的第一名。"""
+    ds = [
+        _buy("弱主线里的高分", 95, group="弱", strength=55),
+        _buy("强主线里的低分", 66, group="强", strength=90),
+    ]
+    sel = bd.select_final_picks(ds)
+    assert [e["decision"].ts_code for e in sel["picks"]] == ["强主线里的低分", "弱主线里的高分"]
+
+
+def test_select_ties_broken_by_score(temp_db):
+    ds = [_buy("低分", 66, group="同一条", strength=80), _buy("高分", 88, group="同一条", strength=80)]
+    sel = bd.select_final_picks(ds)
+    assert [e["decision"].ts_code for e in sel["picks"]] == ["高分", "低分"]
+
+
+def test_select_rejects_weak_groups(temp_db):
+    """买点再漂亮，票在整体走弱的板块里也是逆水行舟。"""
+    ds = [_buy("A", 95, group="弱板块", strength=30)]
+    sel = bd.select_final_picks(ds, min_group_strength=50)
+    assert sel["picks"] == []
+    assert "低于门槛" in sel["rejected"][0]["reason"]
+
+
+def test_industry_fallback_gets_stricter_threshold(temp_db):
+    """行业口径粗、噪音大，用它筛选时门槛加严一档。"""
+    strength = bd.DEFAULT_MIN_GROUP_STRENGTH + bd.INDUSTRY_STRENGTH_PENALTY / 2
+    as_theme = bd.select_final_picks([_buy("A", 80, group="X", kind="theme", strength=strength)])
+    as_industry = bd.select_final_picks([_buy("A", 80, group="X", kind="industry", strength=strength)])
+    assert len(as_theme["picks"]) == 1
+    assert len(as_industry["picks"]) == 0
+
+
+def test_select_reports_missing_group(temp_db):
+    """没有任何主线/行业归属时要说清楚——多半是 stock_basic 缺 industry 或排名那步挂了。"""
+    sel = bd.select_final_picks([_buy("A", 90, group=None)])
+    assert sel["picks"] == []
+    assert "无主线/行业归属" in sel["rejected"][0]["reason"]
+
+
+def test_select_respects_top_n(temp_db):
+    ds = [_buy(f"S{i}", 90 - i, group=f"G{i}", strength=90 - i) for i in range(8)]
+    sel = bd.select_final_picks(ds, top_n=3)
+    assert len(sel["picks"]) == 3
+    assert [e["rank"] for e in sel["picks"]] == [1, 2, 3]
+    assert all("名额已满" in e["reason"] for e in sel["rejected"])
+
+
+def test_select_allows_concentration_by_default(temp_db):
+    """默认不限制每组只数——主线思维本来就要集中。"""
+    ds = [_buy(f"S{i}", 90 - i, group="同一条主线", strength=88) for i in range(4)]
+    sel = bd.select_final_picks(ds)
+    assert len(sel["picks"]) == 4
+
+
+def test_max_per_group_enforces_diversification(temp_db):
+    ds = [_buy(f"S{i}", 90 - i, group="同一条主线", strength=88) for i in range(4)]
+    sel = bd.select_final_picks(ds, max_per_group=2)
+    assert len(sel["picks"]) == 2
+    assert any("分散约束" in e["reason"] for e in sel["rejected"])
+
+
+def test_apply_picks_writes_rank_back(temp_db):
+    ds = [_buy("A", 90, group="G", strength=80), _buy("B", 80, group="弱", strength=10)]
+    sel = bd.select_final_picks(ds)
+    bd.apply_picks(ds, sel)
+    assert ds[0].pick_rank == 1
+    assert ds[1].pick_rank == 0
+    assert "低于门槛" in ds[1].pick_reason
+
+
+def test_pick_rank_is_persisted(temp_db):
+    ds = [_buy("600000.SH", 90, group="G", strength=80)]
+    bd.apply_picks(ds, bd.select_final_picks(ds))
+    assert bd.save_buy_decisions(ds) == 1
+
+    from modules.database import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT pick_rank, pick_reason FROM buy_decisions").fetchone()
+    assert row[0] == 1
+    assert "强度" in row[1]
+
+
+def test_format_final_picks_lists_rejections(temp_db):
+    ds = [_buy("A", 90, group="强", strength=80), _buy("B", 88, group="弱", strength=10)]
+    text = bd.format_final_picks(bd.select_final_picks(ds))
+    assert "入选 1 只" in text
+    assert "落选 1 只" in text
+    assert "B" in text
+
+
+def test_format_final_picks_when_nothing_selected(temp_db):
+    text = bd.format_final_picks(bd.select_final_picks([]))
+    assert "无入选标的" in text

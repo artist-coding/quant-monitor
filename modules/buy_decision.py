@@ -1,7 +1,21 @@
 """阶段1 · 买点确认引擎（日线口径）。
 
-把系统里**已有的**日线战法按"否决 → 触发 → 确认 → 环境 → 主线"五层串起来，
-对每只票给出一个三态里的买入侧结论：``BUY`` / ``WATCH`` / ``NONE``。
+**两阶段漏斗**：
+
+    第一阶段 confirm_buy —— 逐票判"这个时点该不该买"
+        否决 → 触发 → 确认 → 大盘环境    ⇒  BUY / WATCH / NONE
+
+    第二阶段 select_final_picks —— 从 BUY 里挑"最终买哪几只"
+        按主线/行业强弱排序 + 门槛过滤    ⇒  最终持仓候选
+
+为什么分两阶段而不是合成一个总分：这两件事回答的是不同问题。
+第一阶段问"技术面成不成立"，第二阶段问"成立的这些里哪几个值得占用仓位"。
+把主线强度揉进第一阶段的总分会让一条强主线**把一个本来不合格的买点推过阈值**
+（主线层满分 +12，而 BUY 阈值只有 65），等于用板块热度替技术面背书。
+分开之后，主线只影响"从合格的里面挑谁"，不影响"合不合格"。
+
+主线强度仍会在第一阶段算好并挂在决策上（``BuyDecision.theme``），
+只是**不计入 score**——展示用、第二阶段用。
 
 设计原则
 --------
@@ -87,12 +101,19 @@ _MARKET_STRENGTH_CAP = 5.0
 _RESONANCE_PER_EXTRA = 4.0
 _RESONANCE_CAP = 12.0
 
-# ── 主线层 ──
-# 主线强度是 0-100 的百分位（见 themes.py），50 为中位行业水平。
-# 权重换算成 (strength-50)/50 × WEIGHT，即最强主线 +12、最弱主线 -12。
-_THEME_WEIGHT = 12.0
-# 行业分类只是没有主线归属时的兜底参照，不是真正的"炒作主线"，权重减半。
-_INDUSTRY_WEIGHT = 6.0
+# ── 第二阶段：主线/行业筛选 ──
+#
+# 主线强度是 0-100 的百分位（见 themes.py），50 = 与中位数行业一样强。
+# 它**不参与第一阶段打分**，只在这里决定"合格的买点里挑哪几个"。
+
+# 默认最多选几只。真实组合同时持 3~8 只是常态，再多就管不过来也摊薄了主线收益。
+DEFAULT_TOP_N = 5
+# 主线/行业强度门槛：低于中位数行业的板块直接不选。
+# 买点再漂亮，票在一个整体走弱的板块里也是逆水行舟。
+DEFAULT_MIN_GROUP_STRENGTH = 50.0
+# 行业分类只是没有主线归属时的兜底参照，不是真正的"炒作主线"。
+# 用它筛选时门槛加严一档，因为行业归类粗、噪音大。
+INDUSTRY_STRENGTH_PENALTY = 10.0
 
 # 买入侧战法：这些检测器的 action 都是 BUY（已核对 base_strategies /
 # compound_strategies 的实现）。四分之三阴量是 SELL（假突破识别），不在此列。
@@ -127,6 +148,9 @@ class BuyDecision:
     market: dict[str, Any] = field(default_factory=dict)
     theme: dict[str, Any] | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+    # 第二阶段（主线/行业筛选）的结果，由 apply_picks 回填。0 = 未入选。
+    pick_rank: int = 0
+    pick_reason: str = ""
 
     def as_row(self) -> tuple:
         return (
@@ -145,6 +169,8 @@ class BuyDecision:
             (self.theme or {}).get("theme", ""),
             float((self.theme or {}).get("strength", 0) or 0),
             int((self.theme or {}).get("rank", 0) or 0),
+            int(self.pick_rank),
+            self.pick_reason,
             json.dumps(self.detail, ensure_ascii=False, default=str),
         )
 
@@ -369,19 +395,20 @@ def _score_market(market: dict[str, Any]) -> tuple[float, list[str]]:
     return delta, notes
 
 
-def _score_theme(theme: dict[str, Any] | None) -> tuple[float, list[str]]:
-    """主线层。"""
+def _describe_theme(theme: dict[str, Any] | None) -> list[str]:
+    """把主线归属渲染成一条说明。
+
+    **不打分**——主线只在第二阶段 select_final_picks 里起作用。
+    这里挂出来是为了让第一阶段的输出自带上下文，看结论时不用再查一次表。
+    """
     if not theme:
-        return 0.0, []
-    weight = _THEME_WEIGHT if theme.get("kind") == "theme" else _INDUSTRY_WEIGHT
-    strength = _num(theme, "strength", 50.0)
-    delta = (strength - 50.0) / 50.0 * weight
+        return []
     kind_label = "主线" if theme.get("kind") == "theme" else "行业(兜底)"
-    note = (
+    strength = _num(theme, "strength", 50.0)
+    return [
         f"{kind_label}「{theme.get('theme', '')}」强度{strength:.1f} "
-        f"排名{theme.get('rank', 0)}/{theme.get('total', 0)} {delta:+.1f}"
-    )
-    return delta, [note]
+        f"排名{theme.get('rank', 0)}/{theme.get('total', 0)}（不计入确认分，用于第二阶段筛选）"
+    ]
 
 
 # ==================== 主入口 ====================
@@ -498,20 +525,15 @@ def confirm_buy(
     breakdown["market"] = round(mkt_delta, 2)
     confirms.extend(mkt_notes)
 
-    # ── 第六层：主线 ──
+    # ── 主线归属（只挂载，不打分；第二阶段 select_final_picks 才用它）──
     try:
         from .themes import DEFAULT_LOOKBACK, get_stock_theme_strength
 
-        decision.theme = get_stock_theme_strength(
-            ts_code, decision.trade_date, theme_lookback or DEFAULT_LOOKBACK
-        )
+        decision.theme = get_stock_theme_strength(ts_code, decision.trade_date, theme_lookback or DEFAULT_LOOKBACK)
     except Exception as exc:
         logger.warning("主线强度读取失败 %s: %s", ts_code, exc)
         decision.theme = None
-    theme_delta, theme_notes = _score_theme(decision.theme)
-    score += theme_delta
-    breakdown["theme"] = round(theme_delta, 2)
-    confirms.extend(theme_notes)
+    confirms.extend(_describe_theme(decision.theme))
 
     # ── 判定 ──
     decision.score = _clamp(score, 0.0, 100.0)
@@ -570,6 +592,162 @@ def confirm_buy_batch(
     return out
 
 
+# ==================== 第二阶段：主线/行业筛选 ====================
+
+
+def _group_of(d: BuyDecision) -> tuple[str, str, float]:
+    """取一只票用于第二阶段筛选的分组：(名称, kind, 有效强度)。
+
+    有效强度 = 原始强度 −（行业兜底时的惩罚）。行业分类是 Tushare 的粗口径，
+    "元器件"里既有光模块也有电阻厂，同一个强度读数的含金量不如用户手工圈定的主线，
+    所以拿它筛选时门槛加严一档。
+    """
+    theme = d.theme or {}
+    name = str(theme.get("theme") or "")
+    kind = str(theme.get("kind") or "")
+    if not name:
+        return "", "", 0.0
+    strength = _num(theme, "strength", 0.0)
+    if kind == "industry":
+        strength -= INDUSTRY_STRENGTH_PENALTY
+    return name, kind, strength
+
+
+def select_final_picks(
+    decisions: Sequence[BuyDecision],
+    *,
+    top_n: int = DEFAULT_TOP_N,
+    min_group_strength: float = DEFAULT_MIN_GROUP_STRENGTH,
+    max_per_group: int | None = None,
+    include_watch: bool = False,
+) -> dict[str, Any]:
+    """第二阶段：从买点确认通过的票里，按主线/行业强弱挑出最终持仓候选。
+
+    排序主键是**分组强度**而不是买点确认分——这一阶段回答的是"钱该往哪个
+    方向压"，同一条强主线里的第二名，通常好过一条弱主线里的第一名。
+    同组内再按确认分排。
+
+    Args:
+        decisions: 第一阶段的产出
+        top_n: 最多选几只
+        min_group_strength: 分组强度门槛（行业兜底会先扣 INDUSTRY_STRENGTH_PENALTY）
+        max_per_group: 每个主线/行业最多选几只。默认 None = 不限制，
+            即允许把仓位压在同一条主线上（主线思维本就要集中）。
+            想强制分散时设成 1~2。
+        include_watch: 是否把 WATCH 也纳入候选
+
+    Returns:
+        {"picks": [...], "rejected": [...], "candidates": int, "params": {...}}
+        picks/rejected 的元素都是 {"decision", "group", "group_kind",
+        "group_strength", "rank", "reason"}
+    """
+    wanted = {"BUY", "WATCH"} if include_watch else {"BUY"}
+    candidates = [d for d in decisions if d.action in wanted]
+
+    scored: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+
+    for d in candidates:
+        name, kind, strength = _group_of(d)
+        entry = {
+            "decision": d,
+            "group": name,
+            "group_kind": kind,
+            "group_strength": round(strength, 2),
+            "rank": 0,
+            "reason": "",
+        }
+        if not name:
+            # 没有主线也没有行业归属就没法做这一步的判断。不静默丢弃——
+            # 这多半意味着 stock_basic 缺 industry 或主线排名那步失败了。
+            entry["reason"] = "无主线/行业归属，无法参与筛选"
+            rejected.append(entry)
+            continue
+        if strength < min_group_strength:
+            label = "行业" if kind == "industry" else "主线"
+            entry["reason"] = f"{label}「{name}」有效强度 {strength:.1f} 低于门槛 {min_group_strength:.0f}"
+            rejected.append(entry)
+            continue
+        scored.append(entry)
+
+    # 分组强度优先，同组内按确认分
+    scored.sort(key=lambda e: (e["group_strength"], e["decision"].score), reverse=True)
+
+    picks: list[dict[str, Any]] = []
+    per_group: dict[str, int] = {}
+    for entry in scored:
+        group = entry["group"]
+        if max_per_group is not None and per_group.get(group, 0) >= max_per_group:
+            entry["reason"] = f"「{group}」已选满 {max_per_group} 只（分散约束）"
+            rejected.append(entry)
+            continue
+        if len(picks) >= top_n:
+            entry["reason"] = f"名额已满（top_n={top_n}）"
+            rejected.append(entry)
+            continue
+        per_group[group] = per_group.get(group, 0) + 1
+        entry["rank"] = len(picks) + 1
+        label = "行业" if entry["group_kind"] == "industry" else "主线"
+        entry["reason"] = f"{label}「{group}」强度 {entry['group_strength']:.1f}，确认分 {entry['decision'].score:.1f}"
+        picks.append(entry)
+
+    return {
+        "picks": picks,
+        "rejected": rejected,
+        "candidates": len(candidates),
+        "params": {
+            "top_n": top_n,
+            "min_group_strength": min_group_strength,
+            "max_per_group": max_per_group,
+            "include_watch": include_watch,
+        },
+    }
+
+
+def apply_picks(decisions: Sequence[BuyDecision], selection: dict[str, Any]) -> None:
+    """把第二阶段的入选名次写回各 BuyDecision（就地修改），供落库与展示。"""
+    by_code = {d.ts_code: d for d in decisions}
+    for entry in selection.get("picks", []) + selection.get("rejected", []):
+        d = by_code.get(entry["decision"].ts_code)
+        if d is None:
+            continue
+        d.pick_rank = int(entry["rank"])
+        d.pick_reason = str(entry["reason"])
+
+
+def format_final_picks(selection: dict[str, Any]) -> str:
+    """第二阶段结果的人类可读输出。"""
+    picks = selection.get("picks") or []
+    rejected = selection.get("rejected") or []
+    params = selection.get("params") or {}
+
+    lines = [
+        "=" * 86,
+        f"最终选股（第二阶段 · 按主线/行业强弱）  候选 {selection.get('candidates', 0)} 只 → 入选 {len(picks)} 只",
+        f"参数: top_n={params.get('top_n')}  强度门槛={params.get('min_group_strength')}  "
+        f"每组上限={params.get('max_per_group') or '不限'}",
+        "=" * 86,
+    ]
+    if picks:
+        lines.append(f"{'#':>3} {'代码':<12} {'名称':<8} {'确认分':>7} {'分组':<14} {'组强度':>7}  触发战法")
+        for e in picks:
+            d = e["decision"]
+            group = e["group"] + ("(行业)" if e["group_kind"] == "industry" else "")
+            lines.append(
+                f"{e['rank']:>3} {d.ts_code:<12} {(d.name or '')[:8]:<8} {d.score:>7.1f} "
+                f"{group[:14]:<14} {e['group_strength']:>7.1f}  {d.base_strategy}"
+            )
+    else:
+        lines.append("无入选标的。")
+
+    if rejected:
+        lines.append(f"\n【落选 {len(rejected)} 只】")
+        for e in rejected:
+            d = e["decision"]
+            lines.append(f"  - {d.ts_code:<12} {(d.name or '')[:8]:<8} 确认分{d.score:>6.1f}  {e['reason']}")
+    return "\n".join(lines)
+
+
 def save_buy_decisions(decisions: Sequence[BuyDecision]) -> int:
     """落库 buy_decisions（INSERT OR REPLACE，重跑幂等）。
 
@@ -584,8 +762,8 @@ def save_buy_decisions(decisions: Sequence[BuyDecision]) -> int:
             INSERT OR REPLACE INTO buy_decisions
             (ts_code, trade_date, name, action, score, confidence, base_strategy,
              triggers, confirms, vetoes, market_dir, market_strength,
-             theme, theme_strength, theme_rank, detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             theme, theme_strength, theme_rank, pick_rank, pick_reason, detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -629,8 +807,8 @@ def format_buy_summary(decisions: Sequence[BuyDecision]) -> str:
     order = {"BUY": 0, "WATCH": 1, "NONE": 2}
     ordered = sorted(decisions, key=lambda d: (order.get(d.action, 3), -d.score))
     lines = [
-        f"{'代码':<12} {'名称':<8} {'结论':<7} {'确认分':>7} {'触发战法':<14} {'主线':<12} 备注",
-        "-" * 100,
+        f"{'选':<3} {'代码':<12} {'名称':<8} {'结论':<7} {'确认分':>7} {'触发战法':<14} {'主线':<12} 备注",
+        "-" * 104,
     ]
     for d in ordered:
         theme = (d.theme or {}).get("theme", "") or "-"
@@ -641,9 +819,10 @@ def format_buy_summary(decisions: Sequence[BuyDecision]) -> str:
         elif not d.triggers:
             note = f"最近{FRESH_BARS}日无买点信号"
         else:
-            note = (d.confirms[0] if d.confirms else "")
+            note = d.confirms[0] if d.confirms else ""
+        mark = f"#{d.pick_rank}" if d.pick_rank else ""
         lines.append(
-            f"{d.ts_code:<12} {(d.name or '')[:8]:<8} {d.action:<7} {d.score:>7.1f} "
+            f"{mark:<3} {d.ts_code:<12} {(d.name or '')[:8]:<8} {d.action:<7} {d.score:>7.1f} "
             f"{(d.base_strategy or '-'):<14} {theme[:12]:<12} {note[:40]}"
         )
     counts = {a: sum(1 for d in decisions if d.action == a) for a in ("BUY", "WATCH", "NONE")}
