@@ -5,10 +5,12 @@ import { useAppStore } from '../../stores/appStore';
 import { useResponsiveSidebar } from '../../lib/hooks';
 import {
   IconGrid, IconTarget, IconStar, IconHistory, IconArchive, IconActivity, IconExchange, IconSettings, LogoMark,
+  IconRadar,
 } from '../ui/icons';
 
 const NAV_ICONS: Record<string, (p: { size?: number; className?: string }) => ReactElement> = {
   grid: IconGrid,
+  radar: IconRadar,
   target: IconTarget,
   star: IconStar,
   history: IconHistory,

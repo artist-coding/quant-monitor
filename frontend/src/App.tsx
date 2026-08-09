@@ -17,6 +17,7 @@ const StockAnalysis = lazy(() => import('./pages/StockAnalysis'));
 const Backtest = lazy(() => import('./pages/Backtest'));
 const Simulator = lazy(() => import('./pages/Simulator'));
 const Research = lazy(() => import('./pages/Research'));
+const DailyPick = lazy(() => import('./pages/DailyPick'));
 const ResearchHistory = lazy(() => import('./pages/ResearchHistory'));
 
 const queryClient = new QueryClient({
@@ -49,6 +50,14 @@ export default function App() {
                 element={
                   <Suspense fallback={<PageFallback />}>
                     <StockAnalysis />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/daily"
+                element={
+                  <Suspense fallback={<PageFallback />}>
+                    <DailyPick />
                   </Suspense>
                 }
               />

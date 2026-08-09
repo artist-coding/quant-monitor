@@ -40,6 +40,7 @@ export const RISK_COLORS: Record<string, string> = {
 // 导航菜单（icon 为 icons.tsx 中的图标键名）
 export const NAV_ITEMS = [
   { path: '/', label: '总览', icon: 'grid' },
+  { path: '/daily', label: '每日选股', icon: 'radar' },
   { path: '/research', label: '分析记录', icon: 'archive' },
   { path: '/screen', label: '选股', icon: 'target' },
   { path: '/watchlist', label: '自选', icon: 'star' },

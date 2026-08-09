@@ -63,6 +63,7 @@ from api.routes.trade import router as trade_router
 from api.routes.system import router as system_router
 from api.routes.commentary import router as commentary_router
 from api.routes.research import router as research_router
+from api.routes.daily import router as daily_router
 
 prefix = settings.api_prefix
 app.include_router(stock_router, prefix=f"{prefix}/stock", tags=["stock"])
@@ -74,6 +75,7 @@ app.include_router(trade_router, prefix=f"{prefix}/trade", tags=["trade"])
 app.include_router(system_router, prefix=f"{prefix}/system", tags=["system"])
 app.include_router(commentary_router, prefix=f"{prefix}", tags=["commentary"])
 app.include_router(research_router, prefix=f"{prefix}/research", tags=["research"])
+app.include_router(daily_router, prefix=f"{prefix}/daily", tags=["daily"])
 
 
 def start_web():
