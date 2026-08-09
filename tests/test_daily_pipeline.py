@@ -130,6 +130,17 @@ def _write_klines(codes, data_date="20260807", n=3):
         )
 
 
+def _write_stock_basic(pairs):
+    """写入 (ts_code, industry)。主线排名的行业参照系要用它。"""
+    from modules.database import get_connection
+
+    with get_connection() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO stock_basic (ts_code, name, industry) VALUES (?, ?, ?)",
+            [(c, c, ind) for c, ind in pairs],
+        )
+
+
 def _write_index_rows(rows):
     """往 index_daily 写入 (ts_code, trade_date, close, pct_chg) 元组列表。"""
     from modules.database import get_connection
@@ -768,3 +779,206 @@ def test_cli_sync_index_action():
 def test_cli_sync_index_defaults_to_all():
     args = _parse("sync", "index")
     assert args.ts_code is None
+
+
+# ==================== 阶段1：主线强度 + 买点确认（步骤 7 / 8）====================
+
+
+def test_theme_and_buy_steps_run_by_default(monkeypatch, temp_db):
+    """默认应跑满 8 步，主线排名与买点确认都要有结果。"""
+    syncer = FakeSyncer()
+    codes = ("600487.SH", "600519.SH")
+    _install_fake_pipeline(monkeypatch, syncer, codes=codes)
+    _write_stock_basic([(c, "半导体") for c in codes])
+
+    result = run_daily_pipeline("20260807")
+
+    assert result["steps"]["theme_strength"]["status"] in ("success", "failed")
+    assert result["steps"]["buy_decisions"]["status"] == "success"
+    assert len(result["buy_decisions"]) == len(codes)
+    assert set(result["buy_decisions"][0]) >= {"ts_code", "action", "score", "vetoes"}
+
+
+def test_skip_themes_and_skip_buy(monkeypatch, temp_db):
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer)
+    result = run_daily_pipeline("20260807", skip_themes=True, skip_buy=True)
+
+    assert result["steps"]["theme_strength"]["status"] == "skipped"
+    assert result["steps"]["buy_decisions"]["status"] == "skipped"
+    assert result["buy_decisions"] == []
+
+
+def test_theme_step_warns_when_no_theme_imported(monkeypatch, temp_db):
+    """一条主线都没导入时要明确提示会退回行业兜底，而不是静默降级。"""
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer)
+    result = run_daily_pipeline("20260807", skip_buy=True)
+    assert any("尚未导入任何主线成员" in w for w in result["warnings"])
+
+
+def test_theme_step_ranks_imported_themes(monkeypatch, temp_db):
+    from modules import themes as th
+
+    syncer = FakeSyncer()
+    codes = tuple(f"6000{i:02d}.SH" for i in range(6))
+    _install_fake_pipeline(monkeypatch, syncer, codes=codes)
+    # rank_themes 的窗口要多几根 K 线才有意义
+    _write_klines(codes, data_date="20260807", n=6)
+    th.import_members([{"theme": "算力硬件", "ts_code": c} for c in codes])
+
+    result = run_daily_pipeline("20260807", skip_buy=True)
+
+    ranking = result["theme_ranking"]
+    assert ranking["lookback"] == 5
+    assert [t["theme"] for t in ranking["themes"]] == ["算力硬件"]
+    assert result["steps"]["theme_strength"]["rows"] >= 1
+
+
+def test_theme_lookback_is_threaded_through(monkeypatch, temp_db):
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer)
+    result = run_daily_pipeline("20260807", skip_buy=True, theme_lookback=3)
+    assert result["theme_ranking"]["lookback"] == 3
+    assert len(result["theme_ranking"]["window"]) <= 3
+
+
+def test_buy_decisions_are_persisted(monkeypatch, temp_db):
+    from modules.database import get_connection
+
+    syncer = FakeSyncer()
+    codes = ("600487.SH", "600519.SH")
+    _install_fake_pipeline(monkeypatch, syncer, codes=codes)
+
+    run_daily_pipeline("20260807")
+    with get_connection() as conn:
+        rows = conn.execute("SELECT ts_code, trade_date, action FROM buy_decisions").fetchall()
+    assert {r[0] for r in rows} == set(codes)
+    assert all(r[1] == "20260807" for r in rows)
+
+
+def test_buy_decisions_rerun_is_idempotent(monkeypatch, temp_db):
+    from modules.database import get_connection
+
+    syncer = FakeSyncer()
+    codes = ("600487.SH",)
+    _install_fake_pipeline(monkeypatch, syncer, codes=codes)
+
+    run_daily_pipeline("20260807")
+    run_daily_pipeline("20260807")
+    with get_connection() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM buy_decisions").fetchone()[0]
+    assert count == 1, "同一天重跑必须覆盖而不是新增"
+
+
+def test_buy_step_failure_does_not_break_chain(monkeypatch, temp_db):
+    """买点确认整体炸掉时，前面步骤的结果必须保留，整条链降级为 partial。"""
+    import modules.buy_decision as bd_mod
+
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer)
+    monkeypatch.setattr(
+        bd_mod, "confirm_buy_batch", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("模拟买点确认崩溃"))
+    )
+
+    result = run_daily_pipeline("20260807")
+
+    assert result["steps"]["buy_decisions"]["status"] == "failed"
+    assert result["steps"]["daily_scores"]["status"] == "success"
+    assert result["status"] == "partial"
+    assert any("买点确认异常" in e for e in result["errors"])
+
+
+def test_theme_step_failure_does_not_break_buy_step(monkeypatch, temp_db):
+    """主线排名炸掉时买点确认仍要跑完——主线只是加减分项，不是前置条件。"""
+    import modules.themes as th_mod
+
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer)
+    monkeypatch.setattr(
+        th_mod, "rank_themes", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("模拟主线排名崩溃"))
+    )
+
+    result = run_daily_pipeline("20260807")
+
+    assert result["steps"]["theme_strength"]["status"] == "failed"
+    assert result["steps"]["buy_decisions"]["status"] == "success"
+
+
+def test_buy_step_reports_data_date_drift(monkeypatch, temp_db):
+    """买点确认基于库里的真实数据日；与 target 不一致时必须报出来。"""
+    syncer = FakeSyncer()
+    codes = ("600487.SH",)
+    _install_fake_pipeline(monkeypatch, syncer, codes=codes, data_date="20260805")
+
+    result = run_daily_pipeline("20260807")
+
+    assert any("买点确认基于其最新数据日" in w for w in result["warnings"])
+
+
+def test_summary_renders_theme_and_buy_sections(monkeypatch, temp_db):
+    from modules.daily_pipeline import format_pipeline_summary
+
+    syncer = FakeSyncer()
+    _install_fake_pipeline(monkeypatch, syncer)
+    text = format_pipeline_summary(run_daily_pipeline("20260807"))
+    assert "主线强度" in text
+    assert "买点确认" in text
+
+
+# ==================== 阶段1 CLI ====================
+
+
+def test_cli_daily_run_new_skip_flags():
+    args = _parse("daily-run", "--skip-themes", "--skip-buy", "--theme-lookback", "10")
+    assert args.skip_themes and args.skip_buy
+    assert args.theme_lookback == 10
+
+
+def test_cli_daily_run_theme_lookback_default():
+    assert _parse("daily-run").theme_lookback == 5
+
+
+def test_cli_theme_subcommands():
+    assert _parse("theme", "add", "商业航天", "--description", "x").theme_action == "add"
+    assert _parse("theme", "list", "--active-only").active_only is True
+    assert _parse("theme", "import", "a.json", "--replace").replace is True
+    assert _parse("theme", "import", "a.json").source == "kimi-swarm"
+    rank = _parse("theme", "rank", "--lookback", "3", "--dry-run")
+    assert rank.lookback == 3 and rank.dry_run is True
+
+
+def test_cli_buy_command():
+    args = _parse("buy", "600487.SH,600519.SH", "--date", "20260807", "--save", "--json")
+    assert args.codes == "600487.SH,600519.SH"
+    assert args.date == "20260807"
+    assert args.save is True and args.json is True
+
+
+def test_cli_buy_codes_optional():
+    """省略代码时走票池，argparse 不能因此报错。"""
+    assert _parse("buy").codes is None
+
+
+def test_cli_theme_and_buy_in_handler_table():
+    import inspect
+
+    from modules import cli
+
+    src = inspect.getsource(cli.main)
+    assert '"theme": cmd_theme' in src
+    assert '"buy": cmd_buy' in src
+
+
+def test_pipeline_warns_about_dropped_themes(monkeypatch, temp_db):
+    """成员不足的主线被跳过时，编排器要把它报进 warnings。"""
+    from modules import themes as th
+
+    syncer = FakeSyncer()
+    codes = ("600487.SH", "600519.SH")
+    _install_fake_pipeline(monkeypatch, syncer, codes=codes)
+    _write_klines(codes, data_date="20260807", n=6)
+    th.import_members([{"theme": "太小的主线", "ts_code": codes[0]}])
+
+    result = run_daily_pipeline("20260807", skip_buy=True)
+    assert any("主线未参与排名" in w and "太小的主线" in w for w in result["warnings"])

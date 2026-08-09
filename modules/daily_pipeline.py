@@ -1,6 +1,7 @@
-"""每日收盘后编排器（阶段0 地基）。
+"""每日收盘后编排器。
 
-把原本散落在各处的"同步 → 刷指标 → 评分"手工步骤串成一条可重跑、可观测的链：
+把原本散落在各处的"同步 → 刷指标 → 评分 → 决策"手工步骤串成一条
+可重跑、可观测的链：
 
     1. 确定目标交易日（非交易日直接 skipped）
     2. 交易日历缓存（trade_cal，按整年拉取，规避 1 次/分钟限流）
@@ -8,12 +9,17 @@
     4. 宽基指数日线（index_daily）
     5. 票池 K 线补齐 + 指标缓存重算（indicator_cache）
     6. 票池综合评分落库（daily_scores）+ 大盘环境快照
+    7. 主线/行业强度排名落库（theme_strength）        ← 阶段1
+    8. 票池买点确认落库（buy_decisions）              ← 阶段1
+
+步骤 7 必须排在 8 之前：买点确认的主线层直接读 theme_strength 表。
 
 设计约束：
 - **每一步都能独立失败而不中断整条链**。任何一步抛异常只记录到 errors 里，
   后续步骤照常执行。这样即使 Tushare 某个接口挂了，本地能算的部分仍然算完。
 - **全程幂等**。所有落库都是 INSERT OR REPLACE，同一天重跑不会产生脏数据。
-- 不做买卖决策、不下单——那是阶段1（统一决策器）和阶段2（模拟盘）的事。
+- 只产出买入侧结论，不下单。三态里的"今日尾盘卖出"需要盘中快照才能赶在
+  收盘前给出，属于后续的盘中任务；实盘/模拟盘撮合是阶段2 的事。
 """
 
 from __future__ import annotations
@@ -407,7 +413,10 @@ def run_daily_pipeline(
     skip_index: bool = False,
     skip_indicators: bool = False,
     skip_scores: bool = False,
+    skip_themes: bool = False,
+    skip_buy: bool = False,
     watchlist_days: int = 250,
+    theme_lookback: int = 5,
 ) -> dict[str, Any]:
     """执行每日收盘后全流程。
 
@@ -417,12 +426,16 @@ def run_daily_pipeline(
         skip_index: 跳过宽基指数日线同步
         skip_indicators: 跳过票池 K 线补齐与指标缓存重算
         skip_scores: 跳过票池评分落库
+        skip_themes: 跳过主线/行业强度排名
+        skip_buy: 跳过票池买点确认
         watchlist_days: 票池指标缓存回溯天数。默认 250 是有原因的——双线战法
             需要 ≥115 根 K 线，而 sync_indicator_cache 逐日重算，前 115 行的
             双线字段必然为 0，250 天可留出约 135 行可用数据。
+        theme_lookback: 主线强度的统计窗口（交易日）
 
     Returns:
-        结构化摘要 dict，含 status / trade_date / steps / market / top_scores / errors
+        结构化摘要 dict，含 status / trade_date / steps / market /
+        top_scores / theme_ranking / buy_decisions / errors
     """
     started = time.perf_counter()
     raw_target = (trade_date or datetime.now().strftime("%Y%m%d")).strip()
@@ -442,6 +455,8 @@ def run_daily_pipeline(
             "market": {},
             "watchlist_count": 0,
             "top_scores": [],
+            "theme_ranking": {},
+            "buy_decisions": [],
             "warnings": [],
             "errors": [f"交易日期格式错误: {exc}"],
         }
@@ -456,6 +471,8 @@ def run_daily_pipeline(
         "market": {},
         "watchlist_count": 0,
         "top_scores": [],
+        "theme_ranking": {},
+        "buy_decisions": [],
         "warnings": [],
         "errors": [],
     }
@@ -723,6 +740,111 @@ def run_daily_pipeline(
     step["elapsed"] = round(time.perf_counter() - t0, 3)
     steps["daily_scores"] = step
 
+    # ── 步骤 7：主线强度排名 ──
+    #
+    # 必须排在买点确认之前：买点确认的主线层直接读 theme_strength 表。
+    # 即使用户一条主线都没导入，这一步也有价值——它会把 stock_basic.industry
+    # 的行业强度排出来，给买点确认当兜底参照系。
+    step = _new_step()
+    t0 = time.perf_counter()
+    if skip_themes:
+        step.update(status="skipped", message="--skip-themes")
+    else:
+        try:
+            from .themes import DEFAULT_LOOKBACK, rank_themes
+
+            ranking = rank_themes(target, lookback=theme_lookback)
+            themes_ranked = ranking.get("themes") or []
+            industries_ranked = ranking.get("industries") or []
+            step.update(
+                status="success" if ranking.get("written") else "failed",
+                rows=int(ranking.get("written", 0) or 0),
+                message=(
+                    f"窗口 {theme_lookback} 日：主线 {len(themes_ranked)} 条、"
+                    f"行业 {len(industries_ranked)} 个已排名"
+                ),
+            )
+            step["top_themes"] = [
+                {"theme": g.name, "strength": round(g.strength, 2), "excess": round(g.excess, 2), "rank": g.rank}
+                for g in themes_ranked[:5]
+            ]
+            step["top_industries"] = [
+                {"theme": g.name, "strength": round(g.strength, 2), "excess": round(g.excess, 2), "rank": g.rank}
+                for g in industries_ranked[:5]
+            ]
+            result["theme_ranking"] = {
+                "lookback": theme_lookback,
+                "window": ranking.get("window") or [],
+                "themes": step["top_themes"],
+                "industries": step["top_industries"],
+            }
+            if not themes_ranked:
+                result["warnings"].append(
+                    "尚未导入任何主线成员，买点确认的主线层将退回行业分类兜底"
+                    "（用 `zt theme import <json>` 导入外部判定器的产出）"
+                )
+            for dropped in ranking.get("dropped_themes") or []:
+                result["warnings"].append(f"主线未参与排名: {dropped}")
+            if ranking.get("reason"):
+                result["warnings"].append(f"主线强度排名: {ranking['reason']}")
+        except Exception as exc:
+            step.update(status="failed", message=str(exc))
+            result["errors"].append(f"主线强度排名异常: {exc}")
+            logger.error("主线强度排名异常: %s", exc)
+    step["elapsed"] = round(time.perf_counter() - t0, 3)
+    steps["theme_strength"] = step
+
+    # ── 步骤 8：票池买点确认 ──
+    step = _new_step()
+    t0 = time.perf_counter()
+    if skip_buy:
+        step.update(status="skipped", message="--skip-buy")
+    elif not codes:
+        step.update(status="skipped", message="票池为空")
+    else:
+        try:
+            from .buy_decision import confirm_buy_batch, save_buy_decisions
+
+            decisions = confirm_buy_batch(codes, target, market=market, theme_lookback=theme_lookback)
+            written = save_buy_decisions(decisions)
+            counts = {a: sum(1 for d in decisions if d.action == a) for a in ("BUY", "WATCH", "NONE")}
+            step.update(
+                status="success",
+                rows=written,
+                message=f"买入 {counts['BUY']}  观察 {counts['WATCH']}  不买 {counts['NONE']}",
+            )
+            step["counts"] = counts
+            # 买点确认和评分一样，用的是每只票库里的真实数据日；数据没同步上来时
+            # 决策日会早于 target。落库按真实日期，这里把不一致如实报出来。
+            drifted = [f"{d.ts_code}@{d.trade_date}" for d in decisions if d.trade_date and d.trade_date != target]
+            if drifted:
+                result["warnings"].append(
+                    f"以下票的买点确认基于其最新数据日而非 {target}: {', '.join(drifted)}"
+                )
+            no_data = [d.ts_code for d in decisions if not d.trade_date]
+            if no_data:
+                result["errors"].extend(f"{c} 买点确认:无可用K线" for c in no_data)
+            result["buy_decisions"] = [
+                {
+                    "ts_code": d.ts_code,
+                    "name": d.name,
+                    "trade_date": d.trade_date,
+                    "action": d.action,
+                    "score": round(d.score, 2),
+                    "base_strategy": d.base_strategy,
+                    "theme": (d.theme or {}).get("theme", ""),
+                    "theme_kind": (d.theme or {}).get("kind", ""),
+                    "vetoes": d.vetoes,
+                }
+                for d in sorted(decisions, key=lambda x: x.score, reverse=True)
+            ]
+        except Exception as exc:
+            step.update(status="failed", message=str(exc))
+            result["errors"].append(f"买点确认异常: {exc}")
+            logger.error("买点确认异常: %s", exc)
+    step["elapsed"] = round(time.perf_counter() - t0, 3)
+    steps["buy_decisions"] = step
+
     # ── 汇总状态：全失败=failed，部分失败=partial，无错误=success ──
     # trade_day_check 是元步骤（只是"判断了一下"），不代表任何实质工作，
     # 把它算进来会让 all(failed) 恒为 False —— 整条链全崩也只报 partial，
@@ -769,6 +891,33 @@ def format_pipeline_summary(result: dict[str, Any]) -> str:
         lines.append("\n【票池评分 TOP】")
         for item in tops[:10]:
             lines.append(f"  {item['ts_code']:<12} {item['name']:<8} {item['score']:>6.1f}  {item['rating']}")
+
+    ranking = result.get("theme_ranking") or {}
+    if ranking:
+        window = ranking.get("window") or []
+        span = f" ({window[0]}~{window[-1]})" if window else ""
+        lines.append(f"\n【主线强度 · 窗口{ranking.get('lookback', 0)}日{span}】")
+        themes = ranking.get("themes") or []
+        if themes:
+            lines.append("  主线: " + "  ".join(f"{t['theme']}({t['strength']:.0f})" for t in themes))
+        else:
+            lines.append("  主线: 未导入")
+        inds = ranking.get("industries") or []
+        if inds:
+            lines.append("  行业: " + "  ".join(f"{t['theme']}({t['strength']:.0f})" for t in inds))
+
+    buys = result.get("buy_decisions") or []
+    if buys:
+        counts = {a: sum(1 for b in buys if b["action"] == a) for a in ("BUY", "WATCH", "NONE")}
+        lines.append(f"\n【买点确认】买入 {counts['BUY']}  观察 {counts['WATCH']}  不买 {counts['NONE']}")
+        for b in buys:
+            if b["action"] == "NONE" and not b["vetoes"]:
+                continue  # 无信号的票不逐条刷屏，只显示有结论或被否决的
+            theme = b.get("theme") or "-"
+            if b.get("theme_kind") == "industry":
+                theme += "(行业)"
+            tail = b["vetoes"][0] if b["vetoes"] else f"{b['base_strategy']} · 主线{theme}"
+            lines.append(f"  {b['action']:<6} {b['ts_code']:<12} {b['name']:<8} {b['score']:>6.1f}  {tail}")
 
     warnings = result.get("warnings") or []
     if warnings:

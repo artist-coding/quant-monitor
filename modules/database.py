@@ -662,7 +662,102 @@ def init_database(verbose: bool = True) -> None:
             ON daily_scores(trade_date DESC, score DESC)
         """)
 
-        # 15. 自我改进系统跟踪表（tracking_tables.sql）
+        # 15. 主线（炒作题材）定义表
+        #
+        # 主线由**用户手工维护**——系统不自己判断"当前炒什么"，那需要新闻/情绪面
+        # 数据，本地一概没有。这里只存用户给定的主线清单。
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS themes (
+                name TEXT PRIMARY KEY,           -- 主线名称，如 "商业航天"
+                description TEXT DEFAULT '',     -- 主线说明（给外部判定器看的口径）
+                active INTEGER DEFAULT 1,        -- 0=已退潮，保留历史但不参与排名
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 16. 主线成员表（股票 ↔ 主线）
+        #
+        # 成员关系由**外部判定器**（用户本地的 kimi code + swarm）产出后导入，
+        # 本系统不做"这只票属不属于该主线"的语义判断——没有题材数据源，
+        # 硬猜只会产生看起来合理、实则编造的归类。source 字段记录判定来源，
+        # 便于日后区分人工标注与模型标注。
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS theme_members (
+                theme TEXT NOT NULL,             -- 主线名称，对应 themes.name
+                ts_code TEXT NOT NULL,
+                confidence REAL DEFAULT 1.0,     -- 外部判定器给出的归属置信度 0-1
+                reason TEXT DEFAULT '',          -- 判定理由（外部产出，原样保存）
+                source TEXT DEFAULT '',          -- 判定来源，如 'kimi-swarm' / 'manual'
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (theme, ts_code)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_theme_members_code
+            ON theme_members(ts_code)
+        """)
+
+        # 17. 主线强度每日快照（本系统计算：主线之间的强弱排序）
+        #
+        # kind 区分两类分组：
+        #   'theme'    — 用户定义的主线，成员来自 theme_members
+        #   'industry' — stock_basic.industry 行业分类，自动生成，
+        #                给没有任何主线归属的票兜底，也用作主线强度的参照系
+        #   'market'   — 全市场基准行，用于计算超额强度
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS theme_strength (
+                trade_date TEXT NOT NULL,
+                theme TEXT NOT NULL,
+                kind TEXT NOT NULL,              -- theme / industry / market
+                lookback INTEGER NOT NULL,       -- 统计窗口交易日数
+                member_count INTEGER,            -- 有行情数据的成员数
+                median_pct_chg REAL,             -- 窗口内累计涨幅中位数
+                up_ratio REAL,                   -- 累计上涨家数占比 %
+                limit_up_count INTEGER,          -- 窗口内涨停次数合计
+                attack_count INTEGER,            -- 窗口内放量攻击次数合计
+                amount_per_stock REAL,           -- 人均成交额（资金聚集度）
+                strength REAL,                   -- 0-100 绝对强度，50 中性
+                excess REAL,                     -- strength - 全市场 strength
+                rank INTEGER,                    -- 同 kind 内按 strength 降序排名，1 最强
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (trade_date, theme, lookback)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_theme_strength_date
+            ON theme_strength(trade_date DESC, kind, strength DESC)
+        """)
+
+        # 18. 买点确认结果表（阶段1：日线买点三态决策的买入侧）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS buy_decisions (
+                ts_code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                name TEXT,
+                action TEXT,                     -- BUY / WATCH / NONE
+                score REAL,                      -- 0-100 买点确认分
+                confidence REAL,                 -- 0-1，取自最强触发战法并经各层调整
+                base_strategy TEXT,              -- 触发买点的主战法，如 B1 / SB1 / 长安战法
+                triggers TEXT,                   -- JSON：命中的买点战法
+                confirms TEXT,                   -- JSON：确认项（MACD/量能/大盘/主线）
+                vetoes TEXT,                     -- JSON：一票否决项
+                market_dir TEXT,
+                market_strength REAL,
+                theme TEXT,                      -- 归属的最强主线（无则空）
+                theme_strength REAL,
+                theme_rank INTEGER,
+                detail TEXT,                     -- JSON：完整计算依据，便于复盘归因
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (ts_code, trade_date)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_buy_decisions_date
+            ON buy_decisions(trade_date DESC, action, score DESC)
+        """)
+
+        # 19. 自我改进系统跟踪表（tracking_tables.sql）
         init_tracking_tables(conn)
 
         if verbose:

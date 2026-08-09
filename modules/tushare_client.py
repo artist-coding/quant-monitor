@@ -80,6 +80,20 @@ class TushareClient:
             time.sleep(self.min_request_interval - elapsed)
         self.last_request_time = time.time()
 
+    @staticmethod
+    def _is_permanent_error(exc: Exception) -> bool:
+        """判断错误是否属于"重试也不会好"的一类。
+
+        实测 limit_list_d（涨停板）与 top_list（龙虎榜）在当前账号下返回
+        "抱歉，您没有接口(xxx)访问权限"——权限问题不会因为等 1 秒、2 秒就改变，
+        重试 3 次只是把同一个错误刷三遍日志、多耗两次配额。
+
+        限流同理：退避 1s/2s 远小于任何限流窗口（trade_cal 是 1 次/分钟），
+        同一分钟内重试必然再失败，反而更快烧光配额。
+        """
+        msg = str(exc)
+        return any(k in msg for k in ("没有接口", "访问权限", "权限的具体详情", "频率超限", "rate limit", "每分钟", "每天最多"))
+
     def _call_api_with_retry(self, api_name: str, func, *args, **kwargs):
         """带退避算法和限流控制的 API 调用封装"""
         max_retries = 3
@@ -88,6 +102,9 @@ class TushareClient:
                 self._rate_limit(api_name)
                 return func(*args, **kwargs)
             except Exception as e:
+                if self._is_permanent_error(e):
+                    logger.error(f"[{api_name}] 调用失败（权限/配额问题，重试无意义，不再重试）: {e}")
+                    return None
                 if attempt == max_retries - 1:
                     logger.error(f"[{api_name}] 最终调用失败: {e}")
                     return None

@@ -586,7 +586,10 @@ def cmd_daily_run(args):
         skip_index=args.skip_index,
         skip_indicators=args.skip_indicators,
         skip_scores=args.skip_scores,
+        skip_themes=args.skip_themes,
+        skip_buy=args.skip_buy,
         watchlist_days=args.watchlist_days,
+        theme_lookback=args.theme_lookback,
     )
 
     if args.json:
@@ -596,6 +599,148 @@ def cmd_daily_run(args):
 
     if result["status"] == "failed":
         raise SystemExit(1)
+
+
+def cmd_theme(args):
+    """主线（炒作题材）管理：成员由外部判定器导入，强弱由本系统排序"""
+    import json as _json
+
+    from modules import themes as th
+
+    action = args.theme_action
+
+    if action == "add":
+        th.upsert_theme(args.name, args.description or "", active=not args.inactive)
+        print(f"主线已保存: {args.name}")
+        return
+
+    if action == "remove":
+        ok = th.remove_theme(args.name)
+        print(f"主线 {args.name} {'已删除' if ok else '不存在'}")
+        return
+
+    if action == "activate" or action == "deactivate":
+        ok = th.set_theme_active(args.name, action == "activate")
+        print(f"主线 {args.name} {'已' + ('启用' if action == 'activate' else '停用') if ok else '不存在'}")
+        return
+
+    if action == "list":
+        rows = th.list_themes(active_only=args.active_only)
+        if args.json:
+            _json_output(rows)
+            return
+        if not rows:
+            print("尚无主线。用 `zt theme add <名称>` 新建，或 `zt theme import <json>` 直接导入成员。")
+            return
+        print(f"{'主线':<18} {'状态':<6} {'成员':>5}  说明")
+        print("-" * 76)
+        for r in rows:
+            print(f"{r['name']:<18} {'启用' if r['active'] else '停用':<6} {r['member_count']:>5}  {r['description'][:40]}")
+        return
+
+    if action == "members":
+        codes = th.get_theme_members(args.name)
+        if args.json:
+            _json_output({"theme": args.name, "members": codes})
+        else:
+            print(f"主线「{args.name}」成员 {len(codes)} 只:")
+            for c in codes:
+                print(f"  {c}")
+        return
+
+    if action == "import":
+        # 外部判定器（kimi code + swarm）产出的 JSON：
+        #   [{"theme": "商业航天", "ts_code": "600879.SH", "confidence": 0.9, "reason": "..."}]
+        # 也接受 {"records": [...]} 包一层的形式
+        with open(args.file, encoding="utf-8") as f:
+            payload = _json.load(f)
+        records = payload.get("records", payload) if isinstance(payload, dict) else payload
+        res = th.import_members(records, source=args.source, replace=args.replace)
+        if args.json:
+            _json_output(res)
+        else:
+            print(f"导入 {res['imported']} 条归属，涉及主线: {', '.join(res['themes']) or '无'}")
+            for s in res["skipped"]:
+                print(f"  ! 跳过: {s}")
+        return
+
+    if action == "rank":
+        trade_date = args.date
+        if not trade_date:
+            from modules.database import get_connection
+
+            with get_connection() as conn:
+                row = conn.execute("SELECT MAX(trade_date) FROM daily_kline").fetchone()
+            trade_date = str(row[0]) if row and row[0] else ""
+        res = th.rank_themes(trade_date, lookback=args.lookback, persist=not args.dry_run)
+        if args.json:
+            _json_output(
+                {
+                    "trade_date": res["trade_date"],
+                    "lookback": res["lookback"],
+                    "window": res["window"],
+                    "written": res["written"],
+                    "themes": [vars(g) | {"members": len(g.members)} for g in res["themes"]],
+                    "industries": [vars(g) | {"members": len(g.members)} for g in res["industries"]],
+                }
+            )
+        else:
+            print(th.format_theme_ranking(res, limit=args.limit))
+        return
+
+
+def cmd_buy(args):
+    """买点确认：大盘环境 + 日线买点战法 + MACD + 成交量 + 主线"""
+    from modules.buy_decision import (
+        confirm_buy_batch,
+        format_buy_decision,
+        format_buy_summary,
+        save_buy_decisions,
+    )
+
+    codes = [c.strip().upper() for c in args.codes.split(",") if c.strip()] if args.codes else []
+    if not codes:
+        from modules.watchlist import list_watch
+
+        codes = [w["ts_code"] for w in list_watch() if w.get("ts_code")]
+    if not codes:
+        print("没有可确认的股票：未指定代码且票池为空")
+        return
+
+    decisions = confirm_buy_batch(codes, args.date, theme_lookback=args.theme_lookback)
+    if args.save:
+        written = save_buy_decisions(decisions)
+        print(f"已落库 buy_decisions {written} 行\n")
+
+    if args.json:
+        _json_output(
+            [
+                {
+                    "ts_code": d.ts_code,
+                    "name": d.name,
+                    "trade_date": d.trade_date,
+                    "action": d.action,
+                    "score": round(d.score, 2),
+                    "confidence": d.confidence,
+                    "base_strategy": d.base_strategy,
+                    "triggers": d.triggers,
+                    "confirms": d.confirms,
+                    "vetoes": d.vetoes,
+                    "market": d.market,
+                    "theme": d.theme,
+                    "detail": d.detail,
+                }
+                for d in decisions
+            ]
+        )
+        return
+
+    if len(decisions) == 1 or args.detail:
+        for d in decisions:
+            print(format_buy_decision(d))
+            print()
+    else:
+        print(format_buy_summary(decisions))
 
 
 def build_parser():
@@ -623,6 +768,11 @@ def build_parser():
   zt sync sync 600487.SH
   zt sync trade-cal --start 20260101 --end 20261231
   zt sync index --ts-code 000300.SH
+  zt theme add 商业航天 --description "卫星互联网/火箭发射产业链"
+  zt theme import themes.json --replace
+  zt theme rank --lookback 5
+  zt buy
+  zt buy 601360.SH --detail
   zt daily-run
   zt daily-run --date 20260807 --json
         """,
@@ -742,9 +892,62 @@ def build_parser():
     p_daily_run.add_argument("--skip-index", action="store_true", help="跳过宽基指数日线同步")
     p_daily_run.add_argument("--skip-indicators", action="store_true", help="跳过票池 K 线补齐与指标缓存重算")
     p_daily_run.add_argument("--skip-scores", action="store_true", help="跳过票池评分落库")
+    p_daily_run.add_argument("--skip-themes", action="store_true", help="跳过主线/行业强度排名")
+    p_daily_run.add_argument("--skip-buy", action="store_true", help="跳过票池买点确认")
     p_daily_run.add_argument(
         "--watchlist-days", type=int, default=250, help="票池指标缓存回溯天数（双线战法需 ≥115，默认 250）"
     )
+    p_daily_run.add_argument("--theme-lookback", type=int, default=5, help="主线强度统计窗口（交易日，默认 5）")
+
+    # ── theme（主线管理）──
+    p_theme = subparsers.add_parser("theme", help="主线（炒作题材）管理：成员外部导入，强弱本地排序")
+    p_theme_sub = p_theme.add_subparsers(dest="theme_action", required=True)
+
+    p_theme_add = p_theme_sub.add_parser("add", help="新建/更新一条主线")
+    p_theme_add.add_argument("name", help="主线名称，如 商业航天")
+    p_theme_add.add_argument("--description", default="", help="主线说明（给外部判定器看的口径）")
+    p_theme_add.add_argument("--inactive", action="store_true", help="建档但不参与排名")
+
+    p_theme_rm = p_theme_sub.add_parser("remove", help="删除主线及其成员关系")
+    p_theme_rm.add_argument("name")
+
+    p_theme_on = p_theme_sub.add_parser("activate", help="启用主线")
+    p_theme_on.add_argument("name")
+    p_theme_off = p_theme_sub.add_parser("deactivate", help="停用主线（退潮，保留历史）")
+    p_theme_off.add_argument("name")
+
+    p_theme_ls = p_theme_sub.add_parser("list", help="列出主线及成员数")
+    p_theme_ls.add_argument("--active-only", action="store_true", help="只看启用中的")
+    p_theme_ls.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_theme_mem = p_theme_sub.add_parser("members", help="列出某条主线的成员")
+    p_theme_mem.add_argument("name")
+    p_theme_mem.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_theme_imp = p_theme_sub.add_parser(
+        "import",
+        help="导入外部判定器（kimi code + swarm）产出的股票↔主线归属 JSON",
+    )
+    p_theme_imp.add_argument("file", help='JSON 文件：[{"theme":"...","ts_code":"...","confidence":0.9,"reason":"..."}]')
+    p_theme_imp.add_argument("--source", default="kimi-swarm", help="判定来源标记，默认 kimi-swarm")
+    p_theme_imp.add_argument("--replace", action="store_true", help="先清空涉及主线的旧成员再导入（整体重跑时用）")
+    p_theme_imp.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_theme_rank = p_theme_sub.add_parser("rank", help="计算并排序主线/行业强度")
+    p_theme_rank.add_argument("--date", help="交易日 YYYYMMDD，默认库内最新")
+    p_theme_rank.add_argument("--lookback", type=int, default=5, help="统计窗口交易日数，默认 5")
+    p_theme_rank.add_argument("--limit", type=int, default=15, help="每类最多显示几条")
+    p_theme_rank.add_argument("--dry-run", action="store_true", help="只算不落库")
+    p_theme_rank.add_argument("--json", action="store_true", help="JSON输出")
+
+    # ── buy（买点确认）──
+    p_buy = subparsers.add_parser("buy", help="买点确认：大盘环境 + 日线买点战法 + MACD + 成交量 + 主线")
+    p_buy.add_argument("codes", nargs="?", help="股票代码，逗号分隔；省略则用票池")
+    p_buy.add_argument("--date", help="交易日 YYYYMMDD，默认该票最新数据日")
+    p_buy.add_argument("--detail", action="store_true", help="多只票时也逐只展开详情")
+    p_buy.add_argument("--save", action="store_true", help="结果落库 buy_decisions")
+    p_buy.add_argument("--theme-lookback", type=int, default=5, help="主线强度统计窗口（交易日，默认 5）")
+    p_buy.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── monitor ──
     p_monitor = subparsers.add_parser("monitor", help="自选股主动预警与扫描推送")
@@ -772,6 +975,8 @@ def main():
         "watchlist": cmd_watchlist,
         "sync": cmd_sync,
         "daily-run": cmd_daily_run,
+        "theme": cmd_theme,
+        "buy": cmd_buy,
         "backtest": cmd_backtest,
         "trade": cmd_trade,
         "daily": cmd_daily,
