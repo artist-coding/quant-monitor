@@ -120,6 +120,12 @@ def _write_klines(codes, data_date="20260807", n=3):
             d = (end - timedelta(days=n - 1 - i)).strftime("%Y%m%d")
             rows.append((code, d, 10.0, 10.5, 9.5, 10.0, 1000.0, 10000.0, 0.0))
     with get_connection() as conn:
+        # 顺带登记 stock_basic：可交易性过滤用 INNER JOIN stock_basic，
+        # 没有基础信息的代码会被判为"无法确认是否 ST"而整体排除。
+        conn.executemany(
+            "INSERT OR IGNORE INTO stock_basic (ts_code, name, industry) VALUES (?, ?, '')",
+            [(c, c) for c in codes],
+        )
         conn.executemany(
             """
             INSERT OR REPLACE INTO daily_kline

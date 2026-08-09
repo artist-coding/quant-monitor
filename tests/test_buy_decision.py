@@ -58,6 +58,18 @@ def _trigger(strategy="B1", confidence=0.6, trade_date="20260730", bars_ago=0):
     }
 
 
+def _register(code="600000.SH", name="测试股"):
+    """在 stock_basic 里登记一只可交易的票。
+
+    买点确认的第零层要查 stock_basic 判断是否 ST；查不到会被判为
+    "无法确认是否 ST"而直接排除，所以不走 _install 的测试得自己登记。
+    """
+    from modules.database import get_connection
+
+    with get_connection() as conn:
+        conn.execute("INSERT OR REPLACE INTO stock_basic (ts_code, name) VALUES (?, ?)", (code, name))
+
+
 def _install(monkeypatch, *, vetoes=(), triggers=(), macd_sig=None):
     """替换否决层与触发层，让主流程可控。"""
     detail = {"macd": {}, "_macd_sig": macd_sig or {}}
@@ -282,6 +294,7 @@ def test_score_is_clamped_to_100(monkeypatch, temp_db):
 
 
 def test_no_klines_returns_empty_decision(monkeypatch, temp_db):
+    _register()
     d = confirm_buy("600000.SH", klines=[], market=NEUTRAL_MARKET)
     assert d.action == "NONE"
     assert d.detail["reason"] == "无 K 线数据"
@@ -302,6 +315,7 @@ def test_future_date_falls_back_to_latest_bar(monkeypatch, temp_db):
 
 def test_date_before_all_data_is_not_persistable(monkeypatch, temp_db):
     """目标日早于全部数据时不产出可落库的决策。"""
+    _register()
     d = confirm_buy("600000.SH", "19900101", klines=_make_klines(60), market=NEUTRAL_MARKET)
     assert d.action == "NONE"
     assert d.trade_date == ""
@@ -310,6 +324,7 @@ def test_date_before_all_data_is_not_persistable(monkeypatch, temp_db):
 
 def test_insufficient_history_is_reported(monkeypatch, temp_db):
     """战法检测普遍需要 20 根以上历史，不足时要说清楚而不是静默给 NONE。"""
+    _register()
     d = confirm_buy("600000.SH", klines=_make_klines(10), market=NEUTRAL_MARKET)
     assert d.action == "NONE"
     assert "不足以检测战法" in d.detail["reason"]
@@ -567,3 +582,78 @@ def test_format_final_picks_lists_rejections(temp_db):
 def test_format_final_picks_when_nothing_selected(temp_db):
     text = bd.format_final_picks(bd.select_final_picks([]))
     assert "无入选标的" in text
+
+
+# ==================== 第零层：可交易性过滤（ST / 北交所）====================
+
+
+@pytest.mark.parametrize(
+    "code,name,expect",
+    [
+        ("600000.SH", "浦发银行", ""),
+        ("000001.SZ", "平安银行", ""),
+        ("000010.SZ", "*ST美丽", "ST"),
+        ("000078.SZ", "ST海王", "ST"),
+        ("920002.BJ", "万达轴承", "北交所"),
+        ("920008.BJ", "ST某北交票", "北交所"),  # 两条都中时先报北交所
+        ("600001.SH", None, "无 stock_basic"),
+    ],
+)
+def test_exclusion_reason_rules(code, name, expect):
+    from modules.universe import exclusion_reason
+
+    reason = exclusion_reason(code, name)
+    if expect:
+        assert expect in reason
+    else:
+        assert reason == ""
+
+
+def test_filter_tradable_splits_and_keeps_order(temp_db):
+    from modules.database import get_connection
+    from modules.universe import filter_tradable
+
+    with get_connection() as conn:
+        conn.executemany(
+            "INSERT INTO stock_basic (ts_code, name) VALUES (?, ?)",
+            [("600000.SH", "浦发银行"), ("000010.SZ", "*ST美丽"), ("600519.SH", "贵州茅台")],
+        )
+    kept, excluded = filter_tradable(["600000.SH", "000010.SZ", "920002.BJ", "600519.SH", "999999.SZ"])
+    assert kept == ["600000.SH", "600519.SH"]
+    assert set(excluded) == {"000010.SZ", "920002.BJ", "999999.SZ"}
+
+
+def test_st_stock_is_excluded_with_reason(monkeypatch, temp_db):
+    """票池里放了 ST 的话要看到"被排除了"，而不是这只票凭空消失。"""
+    _register("000010.SZ", "*ST美丽")
+    _install(monkeypatch, triggers=[_trigger("SB1", 0.95)])
+    monkeypatch.setattr(bd, "_lookup_name", lambda c: "*ST美丽")
+
+    d = confirm_buy("000010.SZ", klines=_make_klines(60), market=NEUTRAL_MARKET)
+    assert d.action == "NONE"
+    assert d.detail["stopped_at"] == "excluded"
+    assert "ST" in d.vetoes[0]
+    # 不可交易标的不该落库——它不是"某一天的判断"，会污染按日归因
+    assert d.trade_date == ""
+    assert save_buy_decisions([d]) == 0
+
+
+def test_bse_stock_is_excluded(monkeypatch, temp_db):
+    _register("920002.BJ", "某北交票")
+    _install(monkeypatch, triggers=[_trigger("SB1", 0.95)])
+    monkeypatch.setattr(bd, "_lookup_name", lambda c: "某北交票")
+
+    d = confirm_buy("920002.BJ", klines=_make_klines(60), market=NEUTRAL_MARKET)
+    assert d.action == "NONE"
+    assert "北交所" in d.vetoes[0]
+
+
+def test_exclusion_happens_before_any_analysis(monkeypatch, temp_db):
+    """排除要发生在取 K 线之前——不可交易的票不值得跑一遍战法检测。"""
+    _register("000010.SZ", "*ST美丽")
+    called = []
+    monkeypatch.setattr(bd, "_collect_triggers", lambda k, i: called.append(1) or [])
+    monkeypatch.setattr(bd, "_collect_vetoes", lambda k, i: called.append(1) or ([], {}))
+
+    confirm_buy("000010.SZ", klines=_make_klines(60), market=NEUTRAL_MARKET)
+    assert called == []

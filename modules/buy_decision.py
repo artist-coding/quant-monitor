@@ -437,6 +437,23 @@ def confirm_buy(
 
     decision = BuyDecision(ts_code=ts_code, trade_date=trade_date or "")
 
+    # ── 第零层：可交易性 ──
+    # ST 与北交所直接出局，连 K 线都不用取。不静默跳过而是给一条带原因的 NONE：
+    # 票池里放了 ST 的话，用户该看到"被排除了"，而不是这只票凭空消失。
+    from .universe import exclusion_reason
+
+    name = _lookup_name(ts_code)
+    excluded = exclusion_reason(ts_code, name if name else None)
+    if excluded:
+        decision.name = name
+        decision.action = "NONE"
+        decision.vetoes = [f"不可交易标的：{excluded}"]
+        decision.detail["stopped_at"] = "excluded"
+        # trade_date 留空：这不是"某一天的判断"，而是这只票根本不进视野，
+        # 落库会污染按日归因的统计。
+        decision.trade_date = ""
+        return decision
+
     if klines is None:
         raw = get_kline_data(ts_code, days)
         klines = _dict_to_daily(raw) if raw else []
@@ -458,7 +475,7 @@ def confirm_buy(
         return decision
 
     decision.trade_date = klines[index].trade_date
-    decision.name = _lookup_name(ts_code)
+    decision.name = name
 
     # ── 第一层：一票否决 ──
     vetoes, veto_detail = _collect_vetoes(klines, index)

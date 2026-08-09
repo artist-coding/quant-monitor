@@ -18,10 +18,20 @@ from modules import themes as th
 
 
 def _write_klines(rows):
-    """rows: (ts_code, trade_date, pct_chg, vol, amount, is_limit_up)"""
+    """rows: (ts_code, trade_date, pct_chg, vol, amount, is_limit_up)
+
+    同时给每只票登记一条 stock_basic：可交易性过滤（modules/universe.py）用
+    INNER JOIN stock_basic，没有基础信息的代码会被当成"无法确认是否 ST"而排除，
+    只造 K 线的话统计出来会是空的。
+    """
     from modules.database import get_connection
 
+    codes = {r[0] for r in rows}
     with get_connection() as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO stock_basic (ts_code, name, industry) VALUES (?, ?, '')",
+            [(c, c) for c in codes],
+        )
         conn.executemany(
             """
             INSERT OR REPLACE INTO daily_kline

@@ -7,17 +7,25 @@ from ..indicators import DailyData
 
 def get_all_stocks(datasource: DataSource | None = None) -> list[dict]:
     """
-    获取所有股票基本信息
+    获取所有可交易股票的基本信息（已排除 ST 与北交所，见 modules/universe.py）
 
     优先从注入的 datasource 获取，为空时回退到本地 SQLite
     """
+    from ..universe import is_tradable
+
     if datasource is None:
         datasource = get_datasource()
 
     stocks = datasource.get_stock_list()
     if stocks:
-        # 过滤主板/创业板/科创板
-        return [s for s in stocks if s.get("market") in ("主板", "创业板", "科创板", None)]
+        # market 白名单挡不住 ST——ST 遍布主板/创业板/科创板（实测 147/43/14 只），
+        # 必须按名称另判一次。市场字段缺失（None）时也走同一套规则。
+        return [
+            s
+            for s in stocks
+            if s.get("market") in ("主板", "创业板", "科创板", None)
+            and is_tradable(str(s.get("ts_code", "")), s.get("name"))
+        ]
 
     # 回退到本地
     conn = get_db_connection()
@@ -26,6 +34,7 @@ def get_all_stocks(datasource: DataSource | None = None) -> list[dict]:
         SELECT ts_code, name, industry, market
         FROM stock_basic
         WHERE market IN ('主板', '创业板', '科创板')
+          AND name NOT LIKE '%ST%'
         ORDER BY ts_code
     """)
     stocks = [dict(row) for row in cursor.fetchall()]

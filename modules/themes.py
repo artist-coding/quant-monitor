@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
 from .database import get_connection
+from .universe import TRADABLE_PREDICATE
 
 logger = logging.getLogger(__name__)
 
@@ -311,14 +312,15 @@ def _load_window_stats(trade_date: str, lookback: int) -> tuple[list[str], dict[
         rows = conn.execute(
             f"""
             WITH w AS (
-                SELECT ts_code, trade_date, vol, pct_chg, amount,
-                       COALESCE(is_limit_up, 0) AS lu,
-                       AVG(vol) OVER (
-                           PARTITION BY ts_code ORDER BY trade_date
+                SELECT k.ts_code, k.trade_date, k.vol, k.pct_chg, k.amount,
+                       COALESCE(k.is_limit_up, 0) AS lu,
+                       AVG(k.vol) OVER (
+                           PARTITION BY k.ts_code ORDER BY k.trade_date
                            ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
                        ) AS vma5
-                FROM daily_kline
-                WHERE trade_date >= ? AND trade_date <= ?
+                FROM daily_kline k
+                JOIN stock_basic b ON b.ts_code = k.ts_code
+                WHERE k.trade_date >= ? AND k.trade_date <= ? AND {TRADABLE_PREDICATE}
             )
             SELECT ts_code,
                    COUNT(*)                                     AS bars,
@@ -518,7 +520,10 @@ def rank_themes(
             if g is None:
                 if report_dropped:
                     present = sum(1 for c in members if c in stats)
-                    dropped.append(f"{name}（有行情的成员 {present} 只，少于 {_MIN_MEMBERS} 只，无法可靠统计）")
+                    dropped.append(
+                        f"{name}（可交易且有行情的成员 {present} 只，少于 {_MIN_MEMBERS} 只，无法可靠统计；"
+                        f"ST 与北交所成员不计入）"
+                    )
                 continue
             out.append(g)
         return out

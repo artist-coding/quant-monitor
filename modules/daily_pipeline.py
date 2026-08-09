@@ -122,16 +122,22 @@ def compute_market_breadth(trade_date: str) -> dict[str, Any]:
     Returns:
         {"available": bool, ...}；available=False 时其余字段不可用，原因见 reason
     """
+    # ST（±5%）和北交所（±30%）的涨跌停幅度都不是 ±10%，而 is_limit_up 的
+    # 阈值写死 9.9%——前者的涨停永远识别不到、后者涨 12% 会被误判成涨停，
+    # 两边朝相反方向污染同一个统计。宽度只算沪深非 ST 标的。
+    from .universe import TRADABLE_PREDICATE
+
     with get_connection() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT COUNT(*),
-                   SUM(CASE WHEN pct_chg > 0 THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN pct_chg < 0 THEN 1 ELSE 0 END),
-                   SUM(COALESCE(is_limit_up, 0)),
-                   SUM(COALESCE(is_limit_down, 0))
-            FROM daily_kline
-            WHERE trade_date = ? AND pct_chg IS NOT NULL
+                   SUM(CASE WHEN k.pct_chg > 0 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN k.pct_chg < 0 THEN 1 ELSE 0 END),
+                   SUM(COALESCE(k.is_limit_up, 0)),
+                   SUM(COALESCE(k.is_limit_down, 0))
+            FROM daily_kline k
+            JOIN stock_basic b ON b.ts_code = k.ts_code
+            WHERE k.trade_date = ? AND k.pct_chg IS NOT NULL AND {TRADABLE_PREDICATE}
             """,
             (trade_date,),
         ).fetchone()
@@ -149,10 +155,11 @@ def compute_market_breadth(trade_date: str) -> dict[str, Any]:
         # 中位数比均值抗极端值：少数暴涨暴跌股不会带偏整体判断
         median = float(
             conn.execute(
-                """
-                SELECT pct_chg FROM daily_kline
-                WHERE trade_date = ? AND pct_chg IS NOT NULL
-                ORDER BY pct_chg LIMIT 1 OFFSET ?
+                f"""
+                SELECT k.pct_chg FROM daily_kline k
+                JOIN stock_basic b ON b.ts_code = k.ts_code
+                WHERE k.trade_date = ? AND k.pct_chg IS NOT NULL AND {TRADABLE_PREDICATE}
+                ORDER BY k.pct_chg LIMIT 1 OFFSET ?
                 """,
                 (trade_date, total // 2),
             ).fetchone()[0]
@@ -864,7 +871,13 @@ def run_daily_pipeline(
                 result["warnings"].append(
                     f"以下票的买点确认基于其最新数据日而非 {target}: {', '.join(drifted)}"
                 )
-            no_data = [d.ts_code for d in decisions if not d.trade_date]
+            # trade_date 为空有两种原因，必须分开报：
+            #   - 不可交易（ST/北交所）→ 是预期内的排除，记 warning
+            #   - 确实没数据          → 是故障，记 error
+            excluded = [d for d in decisions if not d.trade_date and d.detail.get("stopped_at") == "excluded"]
+            for d in excluded:
+                result["warnings"].append(f"{d.ts_code} {d.name} 已排除: {d.vetoes[0] if d.vetoes else ''}")
+            no_data = [d.ts_code for d in decisions if not d.trade_date and d not in excluded]
             if no_data:
                 result["errors"].extend(f"{c} 买点确认:无可用K线" for c in no_data)
             result["buy_decisions"] = [
