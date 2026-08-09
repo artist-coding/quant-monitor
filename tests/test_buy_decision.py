@@ -70,8 +70,29 @@ def _register(code="600000.SH", name="测试股"):
         conn.execute("INSERT OR REPLACE INTO stock_basic (ts_code, name) VALUES (?, ?)", (code, name))
 
 
-def _install(monkeypatch, *, vetoes=(), triggers=(), macd_sig=None):
-    """替换否决层与触发层，让主流程可控。"""
+def _seed_amv(regime="bull", trade_date="20260807"):
+    """在 temp_db 里铺出指定的活跃市值区间。
+
+    活跃市值是选股总开关，库里没有它 confirm_buy 会在第一层就拦下，
+    所以任何要走到个股判定的测试都得先铺。
+    """
+    from modules.amv import recompute_regimes
+    from modules.database import get_connection
+
+    # 从 20260501 起铺，覆盖所有测试用到的日期区间（_make_klines 从 20260601 开始）。
+    # 两根就够：基准 → 触发。多头用 +5%（≥4），空头用 -3%（< -2.3）。
+    base = 1000.0
+    trigger = base * (1.05 if regime == "bull" else 0.97)
+    rows = [("20260501", base), ("20260502", trigger), (trade_date, trigger)]
+    with get_connection() as conn:
+        conn.executemany("INSERT OR REPLACE INTO amv_daily (trade_date, close) VALUES (?, ?)", rows)
+    recompute_regimes()
+
+
+def _install(monkeypatch, *, vetoes=(), triggers=(), macd_sig=None, amv="bull"):
+    """替换否决层与触发层，让主流程可控；并铺好活跃市值区间。"""
+    if amv:
+        _seed_amv(amv)
     detail = {"macd": {}, "_macd_sig": macd_sig or {}}
     monkeypatch.setattr(bd, "_collect_vetoes", lambda k, i: (list(vetoes), dict(detail)))
     monkeypatch.setattr(bd, "_collect_triggers", lambda k, i: list(triggers))
@@ -111,33 +132,35 @@ def test_score_macd_empty_is_neutral():
     assert bd._score_macd({}) == (0.0, [])
 
 
-@pytest.mark.parametrize(
-    "direction,gate,blocked",
-    [
-        ("LONG", "neutral", False),
-        ("NEUTRAL", "neutral", False),
-        ("SHORT", "neutral", True),
-        ("LONG", "long", False),
-        ("NEUTRAL", "long", True),
-        ("SHORT", "long", True),
-        ("SHORT", "off", False),
-    ],
-)
-def test_market_gate_matrix(direction, gate, blocked):
-    """大盘是门槛不是分数：不过关就整体停手。"""
-    reason = bd.check_market_gate({"market_dir": direction, "market_strength": 50}, gate)
+@pytest.mark.parametrize("regime,gate,blocked", [("bull", "on", False), ("bear", "on", True), ("bear", "off", False)])
+def test_market_gate_follows_amv_regime(temp_db, regime, gate, blocked):
+    """选股总开关是活跃市值区间，不再是全市场宽度。"""
+    _seed_amv(regime)
+    reason, _warn, day = bd.check_market_gate("20260807", gate)
     assert bool(reason) is blocked
+    assert day is not None
+    assert day.regime == ("多头区间" if regime == "bull" else "空头区间")
 
 
-def test_market_gate_allows_unknown_market():
-    """大盘算不出来是运维问题（当日没做全市场同步），不该被解读成"大盘不好"。"""
-    assert bd.check_market_gate(None) == ""
-    assert bd.check_market_gate({}) == ""
+def test_market_gate_blocks_when_amv_missing(temp_db):
+    """活跃市值现在是总开关，没有数据就拦下——宁可提示补数据，也不在未知区间开仓。"""
+    reason, _warn, day = bd.check_market_gate("20260807")
+    assert "活跃市值无数据" in reason
+    assert day is None
 
 
-def test_market_gate_reason_carries_strength():
-    reason = bd.check_market_gate({"market_dir": "SHORT", "market_strength": 12.5})
-    assert "12.5" in reason
+def test_market_gate_warns_when_amv_is_stale(temp_db):
+    _seed_amv("bull", trade_date="20260801")
+    reason, warnings, day = bd.check_market_gate("20260820")
+    assert reason == ""  # 区间是沿用状态机，旧数据仍放行
+    assert any("落后" in w for w in warnings)
+
+
+def test_position_hint_scales_with_breadth(temp_db):
+    """大盘宽度只影响仓位建议，不影响能否选股。"""
+    levels = [bd.suggest_position({"market_strength": s})["level"] for s in (85, 62, 50, 35, 15)]
+    assert levels == ["重仓", "偏重", "半仓", "轻仓", "空仓观望"]
+    assert bd.suggest_position(None)["level"] == "未知"
 
 
 def test_describe_theme_is_informational_only():
@@ -247,15 +270,14 @@ def test_weak_trigger_becomes_watch(monkeypatch, temp_db):
     assert bd.SCORE_WATCH <= d.score < bd.SCORE_BUY
 
 
-def test_short_market_can_demote_a_trigger(monkeypatch, temp_db):
-    """同一个买点信号，在空头大盘下应被降级。"""
+def test_breadth_no_longer_changes_the_score(monkeypatch, temp_db):
+    """大盘宽度已降级为建仓参考，不再影响确认分，更不决定能否选股。"""
     _install(monkeypatch, triggers=[_trigger("B1", 0.66)])
     kl = _make_klines(60)
     up = confirm_buy("600000.SH", klines=kl, market={"market_dir": "LONG", "market_strength": 75})
     down = confirm_buy("600000.SH", klines=kl, market={"market_dir": "SHORT", "market_strength": 25})
-    assert up.score > down.score
-    assert up.action == "BUY"
-    assert down.action != "BUY"
+    assert up.score == down.score
+    assert up.action == down.action
 
 
 def test_base_uses_highest_confidence_trigger(monkeypatch, temp_db):
@@ -280,6 +302,7 @@ def test_score_is_clamped_to_100(monkeypatch, temp_db):
 
 def test_no_klines_returns_empty_decision(monkeypatch, temp_db):
     _register()
+    _seed_amv()
     d = confirm_buy("600000.SH", klines=[], market=NEUTRAL_MARKET)
     assert d.action == "NONE"
     assert d.detail["reason"] == "无 K 线数据"
@@ -301,6 +324,7 @@ def test_future_date_falls_back_to_latest_bar(monkeypatch, temp_db):
 def test_date_before_all_data_is_not_persistable(monkeypatch, temp_db):
     """目标日早于全部数据时不产出可落库的决策。"""
     _register()
+    _seed_amv()
     d = confirm_buy("600000.SH", "19900101", klines=_make_klines(60), market=NEUTRAL_MARKET)
     assert d.action == "NONE"
     assert d.trade_date == ""
@@ -310,6 +334,7 @@ def test_date_before_all_data_is_not_persistable(monkeypatch, temp_db):
 def test_insufficient_history_is_reported(monkeypatch, temp_db):
     """战法检测普遍需要 20 根以上历史，不足时要说清楚而不是静默给 NONE。"""
     _register()
+    _seed_amv()
     d = confirm_buy("600000.SH", klines=_make_klines(10), market=NEUTRAL_MARKET)
     assert d.action == "NONE"
     assert "无法完整判定" in d.detail["reason"]
@@ -377,6 +402,7 @@ def test_batch_survives_single_stock_failure(monkeypatch, temp_db):
             raise RuntimeError("模拟异常")
         return real(ts_code, *a, **kw)
 
+    _seed_amv()
     monkeypatch.setattr(bd, "confirm_buy", _flaky)
     out, blocked = bd.confirm_buy_batch(["BOOM.SH", "600000.SH"], "20260807", market=NEUTRAL_MARKET)
     assert blocked == ""
@@ -638,6 +664,7 @@ def test_bse_stock_is_excluded(monkeypatch, temp_db):
 def test_exclusion_happens_before_any_analysis(monkeypatch, temp_db):
     """排除要发生在取 K 线之前——不可交易的票不值得跑一遍战法检测。"""
     _register("000010.SZ", "*ST美丽")
+    _seed_amv()
     called = []
     monkeypatch.setattr(bd, "_collect_triggers", lambda k, i: called.append(1) or [])
     monkeypatch.setattr(bd, "_collect_vetoes", lambda k, i: called.append(1) or ([], {}))
@@ -649,29 +676,26 @@ def test_exclusion_happens_before_any_analysis(monkeypatch, temp_db):
 # ==================== 大盘门槛在触发之前 ====================
 
 
-def test_short_market_blocks_before_reading_klines(monkeypatch, temp_db):
-    """大盘不过关时一根 K 线都不该读——这正是把门槛前移的意义。"""
+def test_bear_regime_blocks_before_reading_klines(monkeypatch, temp_db):
+    """空头区间时一根 K 线都不该读——这正是把门槛前移的意义。"""
     _register()
+    _seed_amv("bear")
     touched = []
     monkeypatch.setattr(bd, "_collect_vetoes", lambda k, i: touched.append("veto") or ([], {}))
     monkeypatch.setattr(bd, "_collect_triggers", lambda k, i: touched.append("trigger") or [])
     monkeypatch.setattr(bd, "attach_mdc_fields", lambda k: touched.append("mdc"))
 
-    d = confirm_buy(
-        "600000.SH",
-        klines=_make_klines(60),
-        market={"market_dir": "SHORT", "market_strength": 20},
-    )
+    d = confirm_buy("600000.SH", "20260807", klines=_make_klines(60))
     assert d.action == "NONE"
     assert d.detail["stopped_at"] == "market_gate"
-    assert "大盘门槛未通过" in d.vetoes[0]
-    assert touched == [], "大盘不过关时不应做任何个股分析"
+    assert "空头区间" in d.vetoes[0]
+    assert touched == [], "空头区间时不应做任何个股分析"
     # 不落库：这不是"某一天对这只票的判断"
     assert d.trade_date == ""
     assert save_buy_decisions([d]) == 0
 
 
-def test_market_gate_does_not_add_score(monkeypatch, temp_db):
+def test_gate_does_not_add_score(monkeypatch, temp_db):
     """门槛通过后不再给分——它已履职，再叠一次就是重复计算。"""
     _install(monkeypatch, triggers=[_trigger("B1", 0.7)])
     kl = _make_klines(60)
@@ -681,26 +705,12 @@ def test_market_gate_does_not_add_score(monkeypatch, temp_db):
     assert "market" not in strong.detail["breakdown"]
 
 
-def test_long_gate_blocks_neutral_market(monkeypatch, temp_db):
-    _register()
-    _install(monkeypatch, triggers=[_trigger("B1", 0.9)])
-    d = confirm_buy(
-        "600000.SH",
-        klines=_make_klines(60),
-        market={"market_dir": "NEUTRAL", "market_strength": 55},
-        market_gate=bd.MARKET_GATE_LONG,
-    )
-    assert d.action == "NONE"
-    assert d.detail["stopped_at"] == "market_gate"
-
-
-def test_batch_short_circuits_on_bad_market(temp_db):
+def test_batch_short_circuits_in_bear_regime(temp_db):
     """批量扫描时门槛只判一次，不过关直接返回空表和原因。"""
-    decisions, blocked = bd.confirm_buy_batch(
-        ["600000.SH", "600519.SH"], "20260807", market={"market_dir": "SHORT", "market_strength": 10}
-    )
+    _seed_amv("bear")
+    decisions, blocked = bd.confirm_buy_batch(["600000.SH", "600519.SH"], "20260807")
     assert decisions == []
-    assert "大盘偏空" in blocked
+    assert "空头区间" in blocked
 
 
 # ==================== 触发层只留 B1 ====================
@@ -791,17 +801,19 @@ def test_attach_mdc_is_safe_on_short_series(temp_db):
 # ==================== 全市场扫描 ====================
 
 
-def test_scan_market_blocked_by_gate(temp_db, monkeypatch):
+def test_scan_market_blocked_in_bear_regime(temp_db, monkeypatch):
     import modules.market_context as mc
 
-    monkeypatch.setattr(mc, "compute_market_context", lambda d: {"market_dir": "SHORT", "market_strength": 8})
+    _seed_amv("bear")
+    monkeypatch.setattr(mc, "compute_market_context", lambda d: {"market_dir": "LONG", "market_strength": 90})
     monkeypatch.setattr(bd, "_latest_trade_date", lambda: "20260807")
 
     res = bd.scan_market()
+    # 大盘宽度再好也没用：总开关是活跃市值
     assert res["blocked"]
     assert res["scanned"] == 0
     assert res["decisions"] == []
-    assert "大盘偏空" in bd.format_scan_result(res)
+    assert "空头区间" in bd.format_scan_result(res)
 
 
 def test_scan_market_reports_empty_db(temp_db):
@@ -814,6 +826,7 @@ def test_scan_market_runs_full_funnel(temp_db, monkeypatch):
     import modules.market_context as mc
     import modules.universe as uni
 
+    _seed_amv("bull")
     monkeypatch.setattr(mc, "compute_market_context", lambda d: {"market_dir": "LONG", "market_strength": 80})
     monkeypatch.setattr(bd, "_latest_trade_date", lambda: "20260807")
     monkeypatch.setattr(uni, "tradable_codes", lambda d=None: ["A.SZ", "B.SZ"])

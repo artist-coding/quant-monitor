@@ -767,7 +767,33 @@ def init_database(verbose: bool = True) -> None:
             {"pick_rank": "INTEGER DEFAULT 0", "pick_reason": "TEXT DEFAULT ''"},
         )
 
-        # 18. 自我改进系统跟踪表（tracking_tables.sql）
+        # 18. 活跃市值（AMV）日线与多空区间
+        #
+        # 这是选股的总开关：空头区间不选股。数据来源是用户手工提供
+        # （历史用 zt amv import 批量导入，每日收盘后 zt amv add 录一条）。
+        #
+        # 必须存 close 而不能只存 pct_chg：区间判据里的 -2.3% 是个硬边界，
+        # 而导出的涨幅只有两位小数——实测 1993-10-11 显示 -2.30%（实为
+        # -2.295082%，多头）与 1997-11-11 显示 -2.30%（实为 -2.302724%，空头）
+        # 结论相反。涨幅一律由 close 现算。
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS amv_daily (
+                trade_date TEXT PRIMARY KEY,     -- YYYYMMDD
+                open REAL, high REAL, low REAL,
+                close REAL NOT NULL,             -- 区间判定的唯一可信来源
+                volume REAL, amount REAL,
+                pct_chg REAL,                    -- 由 close 现算，非导入值
+                regime TEXT,                     -- 多头区间 / 空头区间（本系统重算）
+                regime_imported TEXT DEFAULT '', -- 导入文件里的原始标注，仅供回归比对
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_amv_regime
+            ON amv_daily(regime, trade_date DESC)
+        """)
+
+        # 19. 自我改进系统跟踪表（tracking_tables.sql）
         init_tracking_tables(conn)
 
         if verbose:

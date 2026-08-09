@@ -207,7 +207,7 @@ def test_daily_run_command_is_gone():
 
 def test_cli_scan_defaults():
     args = _parse("scan")
-    assert args.market_gate == "neutral"
+    assert args.market_gate == "on"
     assert args.top_n == 5
     assert args.min_strength == 50.0
     assert args.limit == 0
@@ -216,18 +216,36 @@ def test_cli_scan_defaults():
 
 def test_cli_scan_flags():
     args = _parse(
-        "scan", "--date", "20260807", "--market-gate", "long", "--top-n", "3",
+        "scan", "--date", "20260807", "--market-gate", "off", "--top-n", "3",
         "--min-strength", "70", "--max-per-group", "1", "--limit", "200", "--save", "--json",
     )
     assert args.date == "20260807"
-    assert args.market_gate == "long"
+    assert args.market_gate == "off"
     assert args.top_n == 3 and args.min_strength == 70.0 and args.max_per_group == 1
     assert args.limit == 200 and args.save is True and args.json is True
 
 
 def test_cli_buy_has_market_gate():
-    assert _parse("buy").market_gate == "neutral"
+    assert _parse("buy").market_gate == "on"
     assert _parse("buy", "--market-gate", "off").market_gate == "off"
+
+
+def test_cli_amv_subcommands():
+    assert _parse("amv", "import", "a.csv").amv_action == "import"
+    add = _parse("amv", "add", "20260810", "--close", "215000")
+    assert add.amv_action == "add" and add.close == 215000.0 and add.pct is None
+    assert _parse("amv", "add", "20260810", "--pct", "2.4").pct == 2.4
+    assert _parse("amv", "status").segments == 8
+    assert _parse("amv", "list", "--limit", "5").limit == 5
+    assert _parse("amv", "verify").amv_action == "verify"
+
+
+def test_cli_amv_in_handler_table():
+    import inspect
+
+    from modules import cli
+
+    assert '"amv": cmd_amv' in inspect.getsource(cli.main)
 
 
 def test_cli_scan_in_handler_table():

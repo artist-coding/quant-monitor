@@ -1,31 +1,33 @@
 """买点确认引擎（日线口径，全市场扫描用）。
 
-**判定顺序**——大盘在最前，是准入门槛而不是加减分：
+**判定顺序**——活跃市值区间在最前，是准入总开关而不是加减分：
 
     第一阶段 confirm_buy —— 逐票判"这个时点该不该买"
 
-        可交易性 → 大盘门槛 → 一票否决 → B1 触发 → MACD/量能确认
-                                                    ⇒ BUY / WATCH / NONE
+        可交易性 → 活跃市值区间 → 一票否决 → B1 触发 → MACD/量能确认
+                                                        ⇒ BUY / WATCH / NONE
 
     第二阶段 select_final_picks —— 从 BUY 里挑"最终买哪几只"
 
-        按主线/行业强弱排序 + 强度门槛              ⇒ 最终持仓候选
+        按主线/行业强弱排序 + 强度门槛                  ⇒ 最终持仓候选
 
-大盘为什么是门槛而不是分数
---------------------------
+活跃市值是总开关，大盘宽度只是建仓参考
+--------------------------------------
 
-大盘不好就整体不选股，不存在"个股够强就能抵消大盘"的情形。写成加减分
-（原来是 LONG +8 / SHORT −12）意味着一个 90 分的买点在空头市场里仍有 78 分、
-照样过 65 的线，等于允许逆势加仓。改成门槛后，大盘不过关直接全盘停手，
-一根 K 线都不用取——顺带把全市场扫描的开销省掉了。
+能不能选股由**活跃市值多空区间**（见 modules/amv.py）单独决定：
+空头区间完全不选股、不新建仓，多头区间才放行。它是门槛不是分数——
+写成加减分意味着一个 90 分的买点在空头区间里仍有 78 分、照样过 65 的线，
+等于允许逆势加仓。做成门槛后不过关直接全盘停手，一根 K 线都不用读。
 
-门槛通过后**不再给分**：它已经履行完职责，再叠一次分就是重复计算。
+**全市场宽度（market_context）已不再决定能否选股**，降级为建仓轻重的参考
+（``suggest_position``）：同样是多头区间，宽度 80 和宽度 55 该上的仓位不一样。
 
 触发层只留 B1
 -------------
 
 B1（``strategies.base_strategies.detect_b1``）是唯一的买点触发器：
-J < −10 + 非绿砖（4 日内阴线 < 4 根）+ 缩量加分，再叠 MDC 多维验证与麒麟阶段。
+J < ``b1.j_threshold``（默认 13）+ 非绿砖（4 日内阴线 < 4 根）+ 缩量加分，
+再叠 MDC 多维验证与麒麟阶段。
 B2/B3/SB1 与各路复合战法都不再作为触发条件——它们要么是 B1 之后的确认
 （B2/B3），要么口径与 B1 重叠，混在一起会让"为什么买"这件事说不清楚。
 
@@ -100,24 +102,33 @@ _VOL_DOUBLE_GUN = 8.0  # 双枪：两根放量阳夹一堆缩量阴，主力建�
 _VOL_B1_SUOLIANG = 5.0  # B1 当日缩量：B1 的最佳形态就是"缩量回调"
 _VOL_FANGLIANG_YIN = -8.0  # 放量阴线：抛压
 
-# ── 大盘门槛（在触发层之前）──
+# ── 门槛：活跃市值多空区间（在触发层之前）──
 #
-# 取值语义：
-#   "long"    只有 LONG 才选股（最严）
-#   "neutral" LONG 与 NEUTRAL 都可选，SHORT 停手（默认）
-#   "off"     不做大盘判断
+# 选股的**总开关**是活跃市值（见 modules/amv.py），不是全市场宽度：
+#   多头区间 → 可选股、可新建仓
+#   空头区间 → 完全不选股
 #
-# 默认取 "neutral" 而不是 "long"：SHORT 是无歧义的"大盘不好"，而 NEUTRAL 是
-# "不明朗"，震荡市里选择性做多是常态，一刀切会让系统大部分时间不产出任何东西。
-# 2026 年 16 个全市场同步日实测分布：LONG 43.8% / SHORT 31.2% / NEUTRAL 25.0%
-# ——想更保守就把门槛调到 "long"，仍有四成多的交易日可选股。
-MARKET_GATE_LONG = "long"
-MARKET_GATE_NEUTRAL = "neutral"
-MARKET_GATE_OFF = "off"
-DEFAULT_MARKET_GATE = MARKET_GATE_NEUTRAL
-# 大盘环境算不出来时（当日非全市场同步日）是否放行。默认放行并给出警告：
-# 数据没同步上来是运维问题，不该被解读成"大盘不好"。
-ALLOW_ON_UNKNOWN_MARKET = True
+# 全市场宽度已降级为**辅助建仓参考**（见 suggest_position），只提示仓位轻重，
+# 不再决定能不能选股。
+GATE_ON = "on"  # 按活跃市值区间执行（默认）
+GATE_OFF = "off"  # 忽略区间，照常选股（调试/回测用）
+DEFAULT_MARKET_GATE = GATE_ON
+
+# 活跃市值数据比目标日旧多少天就要提醒。区间本身是"沿用前一日"的状态机，
+# 用稍旧的区间在规则上是成立的；真正的风险是那几天里发生过触发而没录入。
+AMV_STALE_WARN_DAYS = 3
+
+# ── 辅助建仓：把全市场宽度强度映射成仓位区间 ──
+#
+# **这组档位是建议值，不是用户给定的规则**——用户只说"辅助判断现在仓位大概
+# 多少合适"，没给具体数字。改这里不影响选股结果，只影响提示文案。
+_POSITION_BANDS = (
+    (70.0, "重仓", "70~100%"),
+    (60.0, "偏重", "50~70%"),
+    (45.0, "半仓", "30~50%"),
+    (30.0, "轻仓", "10~30%"),
+    (0.0, "空仓观望", "0~10%"),
+)
 
 # 注：原有的"多战法共振"加分已随触发层收敛到 B1 一并移除——
 # 只剩一个触发器时 distinct 恒为 1，共振分恒为 0，是死代码。
@@ -367,26 +378,69 @@ def _collect_triggers(klines: list, index: int) -> list[dict[str, Any]]:
     return triggers
 
 
-def check_market_gate(market: dict[str, Any] | None, gate: str = DEFAULT_MARKET_GATE) -> str:
-    """大盘门槛。返回拦截原因；空字符串表示放行。
+def check_market_gate(trade_date: str | None = None, gate: str = DEFAULT_MARKET_GATE) -> tuple[str, list[str], Any]:
+    """选股总开关：活跃市值多空区间。
 
-    这是准入判断而非打分——大盘不过关就整体停手，不存在"个股够强抵消大盘"。
+    Returns:
+        (拦截原因, 警告列表, AmvDay 或 None)。拦截原因为空表示放行。
     """
-    if gate == MARKET_GATE_OFF:
-        return ""
+    from .amv import get_regime
+
+    try:
+        day = get_regime(trade_date)
+    except Exception as exc:
+        logger.warning("活跃市值区间读取失败: %s", exc)
+        day = None
+
+    if gate == GATE_OFF:
+        return "", ["已用 --market-gate off 忽略活跃市值区间"], day
+
+    if day is None:
+        # 活跃市值现在是总开关，没有它就无从判断能不能选股。
+        # 这里选择拦截而不是放行：宁可提示去补数据，也不要在未知区间里开仓。
+        return (
+            "活跃市值无数据，无法判断多空区间。先 `zt amv import <csv>` 导入历史，"
+            "再用 `zt amv add <日期> --close <收盘价>` 录入当日"
+        ), [], None
+
+    warnings: list[str] = []
+    if trade_date and day.trade_date < trade_date:
+        from datetime import datetime
+
+        try:
+            gap = (datetime.strptime(trade_date, "%Y%m%d") - datetime.strptime(day.trade_date, "%Y%m%d")).days
+        except ValueError:
+            gap = 0
+        if gap >= AMV_STALE_WARN_DAYS:
+            warnings.append(
+                f"活跃市值最新只到 {day.trade_date}，比目标日 {trade_date} 落后 {gap} 天。"
+                f"区间是「沿用前一日」的状态机，这几天里若发生过触发而未录入，结论会是错的"
+            )
+
+    if not day.can_select:
+        return f"活跃市值处于{day.regime}（{day.trade_date}，涨幅 {day.pct_chg:+.2f}%），停止选股", warnings, day
+    return "", warnings, day
+
+
+def suggest_position(market: dict[str, Any] | None) -> dict[str, Any]:
+    """把全市场宽度强度换算成建仓仓位建议。
+
+    大盘宽度不再决定"能不能选股"（那是活跃市值区间的职责），只回答
+    "现在大概该拿多重的仓位"。档位是建议值，见 _POSITION_BANDS 注释。
+    """
     if not market:
-        return "" if ALLOW_ON_UNKNOWN_MARKET else "大盘环境未知"
-
-    direction = str(market.get("market_dir", "")).upper()
+        return {"level": "未知", "range": "-", "strength": None, "note": "大盘宽度不可用（当日非全市场同步日）"}
     strength = _num(market, "market_strength", 50.0)
-
-    if direction == "SHORT":
-        return f"大盘偏空（强度 {strength:.1f}），停止选股"
-    if direction == "NEUTRAL" and gate == MARKET_GATE_LONG:
-        return f"大盘中性（强度 {strength:.1f}），门槛要求 LONG，停止选股"
-    if not direction:
-        return "" if ALLOW_ON_UNKNOWN_MARKET else "大盘环境未知"
-    return ""
+    for floor, level, rng in _POSITION_BANDS:
+        if strength >= floor:
+            return {
+                "level": level,
+                "range": rng,
+                "strength": strength,
+                "market_dir": market.get("market_dir", ""),
+                "note": f"大盘{market.get('market_dir', '?')}、强度 {strength:.1f} → 建议{level}（{rng}）",
+            }
+    return {"level": "空仓观望", "range": "0~10%", "strength": strength, "note": ""}
 
 
 def _score_macd(macd_sig: dict[str, Any]) -> tuple[float, list[str]]:
@@ -452,12 +506,9 @@ def _score_volume(klines: list, index: int, triggers: list[dict[str, Any]]) -> t
 
 
 def _describe_market(market: dict[str, Any] | None) -> list[str]:
-    """把已通过门槛的大盘环境渲染成一条说明（不打分——门槛已经履行完职责）。"""
-    if not market:
-        return ["大盘环境未知（当日非全市场同步日），已按放行处理"]
-    return [
-        f"大盘{market.get('market_dir', '?')}（强度{_num(market, 'market_strength', 50.0):.1f}）通过门槛"
-    ]
+    """把大盘宽度渲染成一条建仓提示（不打分、不决定能否选股）。"""
+    hint = suggest_position(market)
+    return [f"建仓参考：{hint['note']}"] if hint.get("note") else []
 
 
 def _describe_theme(theme: dict[str, Any] | None) -> list[str]:
@@ -524,8 +575,8 @@ def confirm_buy(
         decision.trade_date = ""
         return decision
 
-    # ── 第一层：大盘门槛（在取 K 线和一切个股判断之前）──
-    # 大盘不好就整体不选股，不存在"个股够强抵消大盘"。放在最前还有个实际好处：
+    # ── 第一层：活跃市值区间门槛（在取 K 线和一切个股判断之前）──
+    # 空头区间整体不选股，不存在"个股够强抵消区间"。放在最前还有个实际好处：
     # 全市场扫描时门槛不过关可以一根 K 线都不读就返回。
     if market is None and not skip_market_gate:
         from .market_context import compute_market_context
@@ -538,11 +589,11 @@ def confirm_buy(
     decision.market = market or {}
 
     if not skip_market_gate:
-        blocked = check_market_gate(market, market_gate)
+        blocked, _warn, _day = check_market_gate(trade_date or _latest_trade_date(), market_gate)
         if blocked:
             decision.name = name
             decision.action = "NONE"
-            decision.vetoes = [f"大盘门槛未通过：{blocked}"]
+            decision.vetoes = [f"活跃市值门槛未通过：{blocked}"]
             decision.detail["stopped_at"] = "market_gate"
             decision.trade_date = ""
             return decision
@@ -681,7 +732,7 @@ def confirm_buy_batch(
         except Exception as exc:
             logger.warning("大盘环境计算失败 %s: %s", target, exc)
 
-    blocked = check_market_gate(market, market_gate)
+    blocked, _warn, _day = check_market_gate(trade_date or _latest_trade_date(), market_gate)
     if blocked:
         return [], blocked
 
@@ -742,6 +793,9 @@ def scan_market(
     result: dict[str, Any] = {
         "trade_date": target,
         "market": {},
+        "amv": None,
+        "position_hint": {},
+        "warnings": [],
         "blocked": "",
         "scanned": 0,
         "decisions": [],
@@ -758,9 +812,19 @@ def scan_market(
         logger.warning("大盘环境计算失败 %s: %s", target, exc)
         market = {}
     result["market"] = market
+    # 大盘宽度不再是门槛，只给建仓轻重的参考
+    result["position_hint"] = suggest_position(market)
 
-    # 大盘门槛：不过关就到此为止，不读任何 K 线
-    blocked = check_market_gate(market, market_gate)
+    # 总开关：活跃市值多空区间。不过关就到此为止，不读任何 K 线。
+    blocked, gate_warnings, amv_day = check_market_gate(target, market_gate)
+    result["warnings"].extend(gate_warnings)
+    if amv_day is not None:
+        result["amv"] = {
+            "trade_date": amv_day.trade_date,
+            "close": amv_day.close,
+            "pct_chg": amv_day.pct_chg,
+            "regime": amv_day.regime,
+        }
     if blocked:
         result["blocked"] = blocked
         result["elapsed"] = round(time.perf_counter() - started, 2)
@@ -1002,13 +1066,13 @@ def format_buy_decision(d: BuyDecision) -> str:
         lines.append("【一票否决】")
         lines.extend(f"  x {v}" for v in d.vetoes)
     if d.triggers:
-        lines.append(f"【买点战法（最近 {FRESH_BARS} 个交易日）】")
+        lines.append(f"【B1 买点（最近 {FRESH_BARS} 个交易日）】")
         for t in d.triggers[:6]:
             lines.append(
                 f"  * {t['trade_date']} {t['strategy']:<12} 置信度={t['confidence']:.2f}  {t['description'][:52]}"
             )
     elif not d.vetoes:
-        lines.append(f"【买点战法】最近 {FRESH_BARS} 个交易日内无信号")
+        lines.append(f"【B1 买点】最近 {FRESH_BARS} 个交易日内无信号")
     if d.confirms:
         lines.append("【确认项】")
         lines.extend(f"  - {c}" for c in d.confirms)
@@ -1037,7 +1101,7 @@ def format_buy_summary(decisions: Sequence[BuyDecision]) -> str:
         if d.vetoes:
             note = d.vetoes[0]
         elif not d.triggers:
-            note = f"最近{FRESH_BARS}日无买点信号"
+            note = f"最近{FRESH_BARS}日无 B1 信号"
         else:
             note = d.confirms[0] if d.confirms else ""
         mark = f"#{d.pick_rank}" if d.pick_rank else ""
@@ -1060,19 +1124,32 @@ def format_scan_result(result: dict[str, Any], *, show_rejected: int = 15) -> st
         "=" * 86,
     ]
 
+    amv = result.get("amv") or {}
+    if amv:
+        pct = amv.get("pct_chg")
+        lines.append(
+            f"【活跃市值·总开关】{amv.get('regime', '?')}   {amv.get('trade_date', '')}   "
+            f"收盘 {amv.get('close', 0):,.2f}" + (f"   涨幅 {pct:+.2f}%" if pct is not None else "")
+        )
+
     breadth = (market.get("detail") or {}).get("breadth") or {}
+    hint = result.get("position_hint") or {}
     if market:
         lines.append(
-            f"【大盘】{market.get('market_dir', '?')}  强度 {market.get('market_strength', 0)}  "
+            f"【大盘宽度·建仓参考】{market.get('market_dir', '?')}  强度 {market.get('market_strength', 0)}  "
             f"中位涨跌 {market.get('market_pct_chg', 0)}%"
             + (
                 f"  |  {breadth.get('up', 0)}涨/{breadth.get('down', 0)}跌  "
-                f"涨停{breadth.get('limit_up', 0)}/跌停{breadth.get('limit_down', 0)}  "
-                f"样本{breadth.get('total', 0)}"
+                f"涨停{breadth.get('limit_up', 0)}/跌停{breadth.get('limit_down', 0)}"
                 if breadth.get("available")
                 else ""
             )
         )
+        if hint.get("level"):
+            lines.append(f"                    建议仓位 {hint['level']}（{hint.get('range', '-')}）")
+
+    for w in result.get("warnings") or []:
+        lines.append(f"  ! {w}")
 
     if result.get("blocked"):
         lines.append("")

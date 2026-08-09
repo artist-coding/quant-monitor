@@ -93,3 +93,6 @@ data/reports/
 reports/
 .superpowers/
 design-demos/
+
+# 活跃市值原始下载包（体积大、由用户逐次提供，解压后放 data/amv/）
+【批量下载】*.zip

@@ -686,8 +686,8 @@ def cmd_buy(args):
         codes, args.date, theme_lookback=args.theme_lookback, market_gate=args.market_gate
     )
     if blocked:
-        print(f"大盘门槛未通过：{blocked}")
-        print("本次未判定任何个股。要忽略大盘请加 --market-gate off。")
+        print(f"活跃市值门槛未通过：{blocked}")
+        print("本次未判定任何个股。要忽略区间请加 --market-gate off。")
         return
     selection = select_final_picks(
         decisions,
@@ -736,6 +736,81 @@ def cmd_buy(args):
     if len(decisions) > 1:
         print()
         print(format_final_picks(selection))
+
+
+def cmd_amv(args):
+    """活跃市值：选股的总开关（多空区间）"""
+    from modules import amv
+
+    action = args.amv_action
+
+    if action == "import":
+        res = amv.import_history(args.file)
+        print(f"导入 {res['imported']} 行，区间 {res['start']} ~ {res['end']}")
+        v = amv.verify_against_imported()
+        if v["total"]:
+            print(f"与文件自带标注比对: {v['matched']}/{v['total']}  吻合 {v['accuracy']}%")
+            for m in v["mismatches"][:10]:
+                print(f"  ! {m['trade_date']}  重算={m['computed']}  标注={m['imported']}")
+        print()
+        print(amv.format_amv_status(amv.get_regime(), amv.regime_segments(5)))
+        return
+
+    if action == "add":
+        day = amv.add_daily(args.date, close=args.close, pct_chg=args.pct)
+        print(amv.format_amv_status(day, amv.regime_segments(5)))
+        if args.close is None:
+            print("\n! 只提供了涨幅。涨幅若是四舍五入到两位小数的值，在 -2.3% 边界附近可能")
+            print("  判出相反的区间（实测 -2.295% 与 -2.303% 都显示 -2.30%，结论相反）。")
+            print("  下次尽量给 --close 收盘价。")
+        return
+
+    if action == "status":
+        day = amv.get_regime(args.date)
+        if args.json:
+            _json_output(
+                {}
+                if day is None
+                else {
+                    "trade_date": day.trade_date,
+                    "close": day.close,
+                    "pct_chg": day.pct_chg,
+                    "regime": day.regime,
+                    "can_select": day.can_select,
+                }
+            )
+        else:
+            print(amv.format_amv_status(day, amv.regime_segments(args.segments)))
+        return
+
+    if action == "list":
+        days = amv.recent(args.limit, end_date=args.date)
+        if args.json:
+            _json_output(
+                [
+                    {"trade_date": d.trade_date, "close": d.close, "pct_chg": d.pct_chg, "regime": d.regime}
+                    for d in days
+                ]
+            )
+            return
+        print(f"{'日期':<10} {'收盘':>14} {'涨幅':>10}  区间")
+        print("-" * 52)
+        for d in days:
+            pct = f"{d.pct_chg:+.2f}%" if d.pct_chg is not None else "-"
+            print(f"{d.trade_date:<10} {d.close:>14,.2f} {pct:>10}  {d.regime}")
+        return
+
+    if action == "verify":
+        v = amv.verify_against_imported()
+        if args.json:
+            _json_output(v)
+            return
+        print(f"重算区间 vs 文件标注: {v['matched']}/{v['total']}  吻合 {v['accuracy']}%")
+        for m in v["mismatches"][:20]:
+            print(f"  ! {m['trade_date']}  重算={m['computed']}  标注={m['imported']}")
+        if not v["mismatches"]:
+            print("  逐日完全一致。")
+        return
 
 
 def cmd_scan(args):
@@ -833,8 +908,10 @@ def build_parser():
   zt theme import themes.json --replace
   zt theme rank --lookback 5
   zt buy 601360.SH --detail
+  zt amv add 20260810 --close 215000
+  zt amv status
   zt scan
-  zt scan --market-gate long --top-n 3
+  zt scan --top-n 3
         """,
     )
 
@@ -1002,20 +1079,45 @@ def build_parser():
     p_buy.add_argument("--include-watch", action="store_true", help="第二阶段把 WATCH 也纳入候选")
     p_buy.add_argument(
         "--market-gate",
-        choices=["long", "neutral", "off"],
-        default="neutral",
-        help="大盘门槛：long=只在多头选股 / neutral=空头才停手（默认）/ off=不判大盘",
+        choices=["on", "off"],
+        default="on",
+        help="活跃市值区间门槛：on=空头区间不选股（默认）/ off=忽略区间（调试用）",
     )
     p_buy.add_argument("--json", action="store_true", help="JSON输出")
+
+    # ── amv（活跃市值：选股总开关）──
+    p_amv = subparsers.add_parser("amv", help="活跃市值多空区间：选股的总开关")
+    p_amv_sub = p_amv.add_subparsers(dest="amv_action", required=True)
+
+    p_amv_imp = p_amv_sub.add_parser("import", help="导入历史（0AMV-YYMMDD-增强.csv）")
+    p_amv_imp.add_argument("file", help="CSV 路径")
+
+    p_amv_add = p_amv_sub.add_parser("add", help="录入单日活跃市值（收盘后）")
+    p_amv_add.add_argument("date", help="交易日 YYYYMMDD 或 YYYY-MM-DD")
+    p_amv_add.add_argument("--close", type=float, help="收盘价（首选：区间判定用它现算全精度涨幅）")
+    p_amv_add.add_argument("--pct", type=float, help="日涨幅%%（备选：四舍五入值在 -2.3%% 边界附近不可靠）")
+
+    p_amv_st = p_amv_sub.add_parser("status", help="当前多空区间")
+    p_amv_st.add_argument("--date", help="截至某日，默认最新")
+    p_amv_st.add_argument("--segments", type=int, default=8, help="显示最近几段区间")
+    p_amv_st.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_amv_ls = p_amv_sub.add_parser("list", help="列出最近若干日")
+    p_amv_ls.add_argument("--limit", type=int, default=20)
+    p_amv_ls.add_argument("--date", help="截至某日")
+    p_amv_ls.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_amv_v = p_amv_sub.add_parser("verify", help="重算区间与文件标注逐日比对")
+    p_amv_v.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── scan（全市场扫描）──
     p_scan = subparsers.add_parser("scan", help="全市场扫描：大盘门槛 → B1 买点确认 → 主线/行业筛选")
     p_scan.add_argument("--date", help="交易日 YYYYMMDD，默认库内最新")
     p_scan.add_argument(
         "--market-gate",
-        choices=["long", "neutral", "off"],
-        default="neutral",
-        help="大盘门槛：long=只在多头选股 / neutral=空头才停手（默认）/ off=不判大盘",
+        choices=["on", "off"],
+        default="on",
+        help="活跃市值区间门槛：on=空头区间不选股（默认）/ off=忽略区间（调试用）",
     )
     p_scan.add_argument("--top-n", type=int, default=5, help="最终选股数上限（默认 5）")
     p_scan.add_argument("--min-strength", type=float, default=50.0, help="主线/行业强度门槛（默认 50=中位行业）")
@@ -1056,6 +1158,7 @@ def main():
         "theme": cmd_theme,
         "buy": cmd_buy,
         "scan": cmd_scan,
+        "amv": cmd_amv,
         "backtest": cmd_backtest,
         "trade": cmd_trade,
         "daily": cmd_daily,
