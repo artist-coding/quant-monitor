@@ -42,10 +42,25 @@ def test_get_param_info_found():
     """查已知参数返回 ParamSpec。"""
     info = get_param_info("b1", "j_threshold")
     assert info is not None
-    assert info.default == -10
+    assert info.default == 13
     assert info.min == -30
-    assert info.max == 0
+    assert info.max == 30
     assert info.step == 2
+
+
+def test_b1_j_threshold_has_single_source_of_truth():
+    """detect_b1 / detect_b2 / detect_b1_vec 必须共用同一个 B1 定义。
+
+    历史上这三处各写各的 -10，改一处另两处就悄悄分家了。
+    """
+    import inspect
+
+    from modules.strategies import base_strategies, vectorized
+
+    assert base_strategies.B1_J_THRESHOLD == get_param_info("b1", "j_threshold").default
+    for src in (inspect.getsource(base_strategies.detect_b1), inspect.getsource(base_strategies.detect_b2)):
+        assert 'get_active_param("b1", "j_threshold"' in src
+    assert "_b1_j()" in inspect.getsource(vectorized.detect_b1_vec)
 
 
 def test_get_param_info_not_found():

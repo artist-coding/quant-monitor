@@ -3,6 +3,11 @@ from ..indicators import DailyData
 from .core import StrategyType, StrategySignal, Priority, Action, _get_kdj, _get_bbi, _ensure_daily_klines
 from modules.param_registry import get_active_param
 
+# B1 的 J 值上限（J < 此值触发）。这是全仓库对"什么是 B1"的唯一定义，
+# detect_b2 的"前几日有 B1"回溯与向量化版本都必须引用它，不得各写各的。
+# 运行时可被 param_registry 的 b1.j_threshold 覆盖。
+B1_J_THRESHOLD = 13
+
 
 def _safe_num(val, default=0):
     """Return val if it's a real number, otherwise default."""
@@ -14,7 +19,7 @@ def detect_b1(klines: list[DailyData], index: int, kirin_context: dict | None = 
     检测 B1 买点（已升级 MDC 多维验证 + 麒麟阶段背景）
 
     B1 核心条件：
-    1. J < -10
+    1. J < j_threshold（默认 13，可被 param_registry 覆盖）
     2. 缩量回调（最佳）
     3. 非绿砖状态（连续下跌 < 4天）
 
@@ -36,8 +41,8 @@ def detect_b1(klines: list[DailyData], index: int, kirin_context: dict | None = 
     k, d, j = _get_kdj(klines, index)
 
     # 1. 核心条件判断（参数可被 self-optimizer 覆盖）
-    j_threshold = get_active_param("b1", "j_threshold", -10)
-    if j >= j_threshold:  # J 必须低于 threshold（默认 -10）
+    j_threshold = get_active_param("b1", "j_threshold", B1_J_THRESHOLD)
+    if j >= j_threshold:  # J 必须低于 threshold
         return None
 
     # 检查是否在连续下跌中（绿砖状态）
@@ -122,9 +127,9 @@ def detect_b2(klines: list[DailyData], index: int, kirin_context: dict | None = 
     检测 B2 买点（已升级 MDC 多维验证 + 麒麟阶段背景）
 
     B2 条件（B1后的确认信号）：
-    1. 前几日有B1（J<-10）
+    1. 前几日有B1（J < b1.j_threshold）
     2. 放量长阳（涨幅>=4%）
-    3. J值拐头（>-10）
+    3. J值拐头
 
     MDC 加分项：
     - 处于麒麟会“拉升”阶段 (+20%)
@@ -144,9 +149,11 @@ def detect_b2(klines: list[DailyData], index: int, kirin_context: dict | None = 
 
     # 1. 核心条件：检查是否有B1在前几日
     has_b1 = False
+    # 阈值必须和 detect_b1 取自同一处，否则两边对"什么是 B1"的定义会悄悄分家
+    b1_j_threshold = get_active_param("b1", "j_threshold", B1_J_THRESHOLD)
     for i in range(5, min(15, index)):
         pk, pd, pj = _get_kdj(klines, index - i)
-        if pj < -10:
+        if pj < b1_j_threshold:
             has_b1 = True
             break
 

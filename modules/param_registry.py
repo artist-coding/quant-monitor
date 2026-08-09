@@ -90,13 +90,16 @@ _reg(
     [
         ParamSpec(
             name="j_threshold",
-            default=-10,
+            default=13,
             min=-30,
-            max=0,
+            max=30,
             step=2,
             category="entry",
-            description="B1 买入的 J 值上限（J < threshold 触发，代码实际值 -10）",
-            impact="降低（更负） → 信号更少但超卖更充分；升高 → 更多信号但精度下降",
+            description="B1 买入的 J 值上限（J < threshold 触发）",
+            impact=(
+                "降低（更负） → 信号更少但超卖更充分；升高 → 更多信号但精度下降。"
+                "实测 300 只票 × 90 日：J<-10 触发率 2.73%，J<13 触发率 24.13%（8.8 倍）"
+            ),
             wired=True,
         ),
         ParamSpec(

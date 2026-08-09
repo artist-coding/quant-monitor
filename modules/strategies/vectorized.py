@@ -3,12 +3,25 @@ import numpy as np
 from .core import StrategyType, StrategySignal, Priority
 
 
+def _b1_j() -> float:
+    """B1 的 J 值上限，与 detect_b1 共用同一定义。
+
+    不在模块顶层求值：param_registry 支持运行时用 using_params 临时覆盖，
+    缓存成模块常量会让覆盖失效。
+    """
+    from modules.param_registry import get_active_param
+
+    from .base_strategies import B1_J_THRESHOLD
+
+    return get_active_param("b1", "j_threshold", B1_J_THRESHOLD)
+
+
 def detect_b1_vec(df: pd.DataFrame) -> pd.Series:
     """
-    向量化检测 B1 买点 (J < -10 & 非绿砖)
+    向量化检测 B1 买点 (J < b1.j_threshold & 非绿砖)
     """
-    # 1. J < -10
-    cond_j = df["j"] < -10
+    # 1. J < 阈值（与 detect_b1 共用同一定义，避免两套 B1 口径）
+    cond_j = df["j"] < _b1_j()
 
     # 2. 非绿砖（最近4根阴线数量 < 4）
     # is_yinxian 是 1 (阴) 或 0
@@ -22,10 +35,10 @@ def detect_b2_vec(df: pd.DataFrame) -> pd.Series:
     """
     向量化检测 B2 确认买点 (前有B1 + 放量长阳 + 无上影)
     """
-    # 1. 过去 5 到 15 天前有 B1 (J < -10)
+    # 1. 过去 5 到 15 天前有 B1
     # 原循环是 range(5, 15)，即偏移量 5,6,7,8,9,10,11,12,13,14
     # 这对应于 shift(5) 后的 rolling(10)
-    has_b1_recently = (df["j"] < -10).shift(5).rolling(window=10).max() > 0
+    has_b1_recently = (df["j"] < _b1_j()).shift(5).rolling(window=10).max() > 0
 
     # 2. 放量长阳 (pct_chg >= 4 & is_beidou)
     cond_yang = (df["pct_chg"] >= 4) & (df["is_beidou"])
