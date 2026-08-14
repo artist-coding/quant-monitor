@@ -27,8 +27,6 @@ def detect_b1(klines: list[DailyData], index: int, kirin_context: dict | None = 
     - 价格处于麒麟会“吸筹”阶段 (+20%)
     - 价格处于麒麟会“回落”阶段末期 (+10%)
     - 处于“派发”阶段 (-30%, 一票否决)
-    - 价格触及或低于布林下轨 (+15%)
-    - 主力大单净流入为正 (+10%)
     - RSI6 < 20 (极度超卖, +10%)
     - ADX 高位动能竭尽 (+10%)
     """
@@ -71,27 +69,14 @@ def detect_b1(klines: list[DailyData], index: int, kirin_context: dict | None = 
             confidence -= 0.30  # 处于派发阶段的 B1 极度危险
             mdc_details.append("处于主力派发期(高风险)")
 
-    # 4. MDC 验证 - 布林带 (超跌验证)
-    boll_lower = getattr(today, "boll_lower", None)
-    if boll_lower and today.close <= boll_lower * 1.02:
-        confidence += 0.15
-        mdc_details.append("触及布林下轨(超跌)")
-
-    # 5. MDC 验证 - 资金流 (主力意图)
-    large_inflow = getattr(today, "large_inflow", None)
-    large_outflow = getattr(today, "large_outflow", None)
-    if _safe_num(large_inflow) > _safe_num(large_outflow):
-        confidence += 0.10
-        mdc_details.append("主力大单净流入")
-
-    # 6. MDC 验证 - RSI (极端超卖，参数可被覆盖)
+    # 4. MDC 验证 - RSI (极端超卖，参数可被覆盖)
     rsi6_ceiling = get_active_param("b1", "rsi6_ceiling", 25)
     rsi6 = getattr(today, "rsi6", None)
     if (rsi6 or 50) < rsi6_ceiling:
         confidence += 0.05
         mdc_details.append("RSI极端超卖")
 
-    # 7. MDC 验证 - DMI (趋势动能，参数可被覆盖)
+    # 5. MDC 验证 - DMI (趋势动能，参数可被覆盖)
     adx_floor = get_active_param("b1", "adx_floor", 40)
     adx = getattr(today, "adx", None)
     if _safe_num(adx) > adx_floor:
@@ -135,10 +120,8 @@ def detect_b2(klines: list[DailyData], index: int, kirin_context: dict | None = 
     - 处于麒麟会“拉升”阶段 (+20%)
     - 处于麒麟会“吸筹”末期突破 (+10%)
     - 处于麒麟会“派发”阶段 (-40%, 高位诱多)
-    - 有效突破布林中轨 (+15%)
     - 主力大单强力净流入比例高 (+15%)
     - DMI 趋势金叉 (+10%)
-    - 布林开口向上 (+10%)
     """
     if index < 15:
         return None
@@ -187,26 +170,7 @@ def detect_b2(klines: list[DailyData], index: int, kirin_context: dict | None = 
             confidence -= 0.40  # 派发阶段的假突破非常多
             mdc_details.append("处于主力派发期(假突破风险)")
 
-    # 4. MDC 验证 - 布林带 (突破验证)
-    boll_mid_today = getattr(today, "boll_mid", None)
-    boll_mid_yesterday = getattr(yesterday, "boll_mid", None)
-    if boll_mid_today and boll_mid_yesterday and yesterday.close < boll_mid_yesterday and today.close > boll_mid_today:
-        confidence += 0.15
-        mdc_details.append("突破布林中轨(走强)")
-
-    boll_upper_today = getattr(today, "boll_upper", None)
-    boll_lower_today = getattr(today, "boll_lower", None)
-    boll_upper_yesterday = getattr(yesterday, "boll_upper", None)
-    boll_lower_yesterday = getattr(yesterday, "boll_lower", None)
-    if boll_upper_today and boll_lower_today and boll_upper_yesterday and boll_lower_yesterday:
-        # 简单判断开口：width 增加
-        today_width = (boll_upper_today - boll_lower_today) / boll_mid_today if boll_mid_today else 0
-        prev_width = (boll_upper_yesterday - boll_lower_yesterday) / boll_mid_yesterday if boll_mid_yesterday else 0
-        if today_width > prev_width * 1.05:
-            confidence += 0.05
-            mdc_details.append("布林开口向上")
-
-    # 5. MDC 验证 - 资金流 (强力买入)
+    # 4. MDC 验证 - 资金流 (强力买入)
     total_amount = today.amount
     large_inflow = getattr(today, "large_inflow", 0)
     large_outflow = getattr(today, "large_outflow", 0)
@@ -217,7 +181,7 @@ def detect_b2(klines: list[DailyData], index: int, kirin_context: dict | None = 
             confidence += 0.15
             mdc_details.append(f"主力大单强力净流入({inflow_ratio * 100:.1f}%)")
 
-    # 6. MDC 验证 - DMI (金叉验证)
+    # 5. MDC 验证 - DMI (金叉验证)
     dmi_plus_today = getattr(today, "dmi_plus", None)
     dmi_minus_today = getattr(today, "dmi_minus", None)
     dmi_plus_yesterday = getattr(yesterday, "dmi_plus", None)

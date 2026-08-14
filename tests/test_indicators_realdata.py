@@ -94,9 +94,6 @@ def merged(kline_df, stk_factor_df) -> pd.DataFrame:
         "rsi_6",
         "rsi_12",
         "rsi_24",
-        "boll_upper",
-        "boll_mid",
-        "boll_lower",
         "cci",
     ]
     cols_to_use = [c for c in factor_cols if c in stk_factor_df.columns]

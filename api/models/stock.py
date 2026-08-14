@@ -29,14 +29,6 @@ class RSIDetail(BaseModel):
     rsi24: float = 0
 
 
-class BollingerDetail(BaseModel):
-    mid: float = 0
-    upper: float = 0
-    lower: float = 0
-    width: float = 0
-    position: float = 0
-
-
 class MADetail(BaseModel):
     ma5: float = 0
     ma10: float = 0
@@ -53,14 +45,6 @@ class DoubleLineDetail(BaseModel):
     is_dead_cross: bool = False
 
 
-class BrickDetail(BaseModel):
-    value: float = 0
-    trend: str = "NEUTRAL"
-    count: int = 0
-    trend_up: bool = False
-    is_fanbao: bool = False
-
-
 class DMIDetail(BaseModel):
     plus: float = 0
     minus: float = 0
@@ -72,12 +56,10 @@ class IndicatorDetail(BaseModel):
     macd: MACDDetail = MACDDetail()
     bbi: float = 0
     rsi: RSIDetail = RSIDetail()
-    bollinger: BollingerDetail = BollingerDetail()
     ma: MADetail = MADetail()
     wr: dict[str, float] = {}
     vol_ratio: float = 0
     double_line: DoubleLineDetail = DoubleLineDetail()
-    brick: BrickDetail = BrickDetail()
     dmi: DMIDetail = DMIDetail()
     signal: str = "WATCH"
     sell_score: int = 0
@@ -172,9 +154,6 @@ class ChartOverlays(BaseModel):
     ma20: list[float | None] = []
     ma60: list[float | None] = []
     bbi: list[float | None] = []
-    boll_upper: list[float | None] = []
-    boll_mid: list[float | None] = []
-    boll_lower: list[float | None] = []
     white_line: list[float | None] = []
     yellow_line: list[float | None] = []
 
@@ -191,11 +170,6 @@ class MacdSeries(BaseModel):
     hist: list[float | None] = []
 
 
-class BrickSeries(BaseModel):
-    values: list[float | None] = []
-    colors: list[int | None] = []
-
-
 class KlineChartResponse(BaseModel):
     ts_code: str
     name: str = ""
@@ -207,7 +181,6 @@ class KlineChartResponse(BaseModel):
     signal_markers: list[SignalMarker] = []
     kdj: KdjSeries = KdjSeries()
     macd: MacdSeries = MacdSeries()
-    brick: BrickSeries = BrickSeries()
     waves_sequence: list[str] = []
     kirin_sequence: list[str] = []
     breathing_wave: list[float] = []

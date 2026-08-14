@@ -46,7 +46,6 @@ Python 数据层（modules/）              LLM 角色层（SKILL.md）
 │   ├─ core.py           基础/数学/核心指标
 │   ├─ price_patterns/   价格形态识别子包
 │   │   ├─ base.py          形态识别基类
-│   │   ├─ brick.py         砖形图
 │   │   ├─ bull_rope.py     牛绳
 │   │   ├─ complex_patterns 复杂形态（蜈蚣图等）
 │   │   ├─ key_candles.py   关键 K
@@ -327,7 +326,7 @@ zettaranc-skill/
 |------|------|---------|
 | `stock_basic` | 股票基本信息 | ts_code, name, industry, market, list_date |
 | `daily_kline` | 日线 K 线 | open, high, low, close, vol, amount, pct_chg |
-| `indicator_cache` | 技术指标缓存（每日快照） | KDJ/MACD/BBI/MA/RSI/WR/布林带/双线/砖形图/DMI/量比/信号 |
+| `indicator_cache` | 技术指标缓存（每日快照） | KDJ/MACD/BBI/MA/RSI/WR/双线/DMI/量比/信号 |
 | `moneyflow` | 资金流向 | 大小单买卖金额、净流入 |
 | `financial_data` | 财务报表 | revenue, net_profit, total_assets, pe, pb, ps |
 | `trade_signals` | 交易信号记录 | signal_type, signal_score, signal_price |
@@ -541,7 +540,7 @@ python corpus/quality_check.py SKILL.md --strict
 | 测试文件 | 覆盖范围 |
 |---------|---------|
 | `test_database.py` | 路径解析、连接上下文、事务回滚、表初始化、幂等性 |
-| `test_indicators.py` | 60+ 指标计算（MA/EMA/KDJ/MACD/背离/BBI/RSI/WR/布林带/量比/双线/单针/砖形图/B1B2/呼吸结构/SB1/沙漏/牛绳/蜈蚣图等） |
+| `test_indicators.py` | 60+ 指标计算（MA/EMA/KDJ/MACD/背离/BBI/RSI/WR/量比/双线/单针/B1B2/呼吸结构/SB1/沙漏/牛绳/蜈蚣图等） |
 | `test_strategies.py` | B1/B2/B3/SB1/长安/四分之三阴量/娜娜/异动地量/出货五式等 |
 | `test_screener.py` / `test_screener_p3.py` | 选股评分、P3 指标接入评分 |
 | `test_backtest.py` / `test_loop_engine.py` / `test_backtest_six_step.py` | 回测框架与六步闭环 |

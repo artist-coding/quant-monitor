@@ -21,7 +21,6 @@ from modules.indicators import (
     calculate_bbi,
     calculate_rsi,
     calculate_wr,
-    calculate_bollinger,
     calculate_vol_ratio,
     calculate_zg_white,
     calculate_dg_yellow,
@@ -30,16 +29,12 @@ from modules.indicators import (
     detect_volume_anomaly,
     detect_double_gun,
     calculate_dmi,
-    calculate_brick_value,
-    calculate_brick_history,
-    detect_fanbao,
     detect_volume_pattern,
     detect_b1_today,
     detect_b2_today,
     detect_breathing_structure,
     detect_sb1,
     detect_b3,
-    detect_four_brick_system,
     calculate_sell_score,
     detect_trade_signal,
     analyze_stock,
@@ -345,23 +340,6 @@ class TestCalculateWR:
         assert calculate_wr(klines, 14) == -50
 
 
-# ========== calculate_bollinger ==========
-
-
-class TestCalculateBollinger:
-    def test_basic(self):
-        klines = make_klines(n=30, base_price=100.0, daily_pct=0.5)
-        mid, upper, lower, width, position = calculate_bollinger(klines)
-        assert mid > 0
-        assert upper > mid > lower
-        assert 0 <= position <= 100
-
-    def test_insufficient_data(self):
-        klines = make_klines(n=5)
-        mid, upper, lower, width, position = calculate_bollinger(klines)
-        assert (mid, upper, lower, width, position) == (0, 0, 0, 0, 50)
-
-
 # ========== calculate_vol_ratio ==========
 
 
@@ -499,27 +477,6 @@ class TestDMI:
         assert calculate_dmi(klines) == (0, 0, 0)
 
 
-# ========== 砖型图 ==========
-
-
-class TestBrickChart:
-    def test_brick_value(self):
-        klines = make_klines(n=20, base_price=100.0)
-        val = calculate_brick_value(klines)
-        assert val >= 0
-
-    def test_brick_history(self):
-        klines = make_klines(n=20, base_price=100.0)
-        trend, count = calculate_brick_history(klines)
-        assert trend in ("RED", "GREEN", "NEUTRAL")
-        assert count >= 0
-
-    def test_fanbao(self):
-        klines = make_klines(n=10, base_price=100.0)
-        result = detect_fanbao(klines)
-        assert isinstance(result, bool)
-
-
 # ========== detect_volume_pattern ==========
 
 
@@ -600,22 +557,6 @@ class TestTradeSignal:
         klines = make_klines(n=50, base_price=100.0)
         signal = detect_trade_signal(klines)
         assert isinstance(signal, TradeSignal)
-
-
-# ========== detect_four_brick_system ==========
-
-
-class TestFourBrickSystem:
-    def test_basic(self):
-        klines = make_klines(n=20, base_price=100.0)
-        result = detect_four_brick_system(klines)
-        assert "brick_action" in result
-        assert result["brick_action"] in ("减仓", "止损", "持有", "禁止抄底", "观望")
-
-    def test_insufficient_data(self):
-        klines = make_klines(n=5)
-        result = detect_four_brick_system(klines)
-        assert result["brick_action"] == "观望"
 
 
 # ========== detect_breathing_structure ==========
@@ -717,8 +658,6 @@ class TestAnalyzeStock:
         assert result.sell_items is not None
         assert result.key_k_list is not None
         assert result.b1_score == baseline.b1_score
-        assert result.brick_action == baseline.brick_action
-        assert result.brick_consecutive == baseline.brick_consecutive
         assert result.close == baseline.close
 
     def test_analysis_memory_cache_returns_isolated_copy(self, temp_db, db_conn):

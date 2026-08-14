@@ -22,8 +22,6 @@ from modules.strategies import (
     detect_s3,
     detect_all_strategies,
     get_latest_signal,
-    detect_brick_signals,
-    detect_buy_exhaustion,
     detect_green_fat_red_thin,
     detect_staircase_distribution,
     detect_top_pinwheel,
@@ -426,201 +424,7 @@ class TestDetectS3Positive:
         assert signal.action == "SELL"
 
 
-class TestDetectBrickSignalsPositive:
-    def test_brick_exit(self):
-        """红砖翻绿 → 止损信号"""
-        # 构造连续上涨后下跌的场景
-        klines = generate_uptrend_klines(n=20, start_price=100.0, daily_pct=1.0)
-        # 最后3天快速下跌（砖值下降）
-        for i in range(3):
-            klines[-(3 - i)]["close"] = klines[-(4 - i)]["close"] * 0.97
-            klines[-(3 - i)]["high"] = klines[-(4 - i)]["close"] * 0.99
-            klines[-(3 - i)]["low"] = klines[-(3 - i)]["close"] * 0.98
-            klines[-(3 - i)]["pct_chg"] = -3.0
-
-        for i in range(10, len(klines)):
-            signal = detect_brick_signals(klines, i)
-            if signal and signal.strategy == StrategyType.BRICK_EXIT:
-                assert signal.action == "SELL"
-                return
-        # 砖形图对序列敏感，不保证一定触发
-        pytest.skip("BRICK_EXIT 未在当前场景触发")
-
-    def test_brick_reduce(self):
-        """连续上涨4块以上 → 减仓信号"""
-        # 前10天缓慢上涨建立砖值基础，后4天加速上涨形成连续红砖
-        base_date = datetime(2026, 1, 1)
-        klines = []
-        price = 100.0
-        for i in range(10):
-            dt = base_date + timedelta(days=i)
-            close = price * 1.003
-            k = make_kline_row(base_price=close, base_vol=10000.0, base_date=dt.strftime("%Y%m%d"))
-            k["open"] = price
-            k["high"] = close * 1.005
-            k["low"] = price * 0.995
-            k["close"] = close
-            k["pct_chg"] = 0.3
-            k["is_rise"] = True
-            klines.append(k)
-            price = close
-        for i in range(4):
-            dt = base_date + timedelta(days=10 + i)
-            close = price * 1.03
-            k = make_kline_row(base_price=close, base_vol=30000.0, base_date=dt.strftime("%Y%m%d"))
-            k["open"] = price * 1.01
-            k["high"] = close * 1.03
-            k["low"] = price * 0.98
-            k["close"] = close
-            k["pct_chg"] = 3.0
-            k["is_rise"] = True
-            klines.append(k)
-            price = close
-
-        for i in range(11, len(klines)):
-            signal = detect_brick_signals(klines, i)
-            if signal and signal.strategy == StrategyType.BRICK_REDUCE:
-                assert signal.action == "SELL"
-                return
-        pytest.skip("BRICK_REDUCE 未在当前场景触发")
-
-    def test_brick_bounce(self):
-        """连续下跌 → 禁止抄底信号"""
-        # 先上涨建立砖值，再连续下跌形成绿砖
-        base_date = datetime(2026, 1, 1)
-        klines = []
-        price = 100.0
-        for i in range(10):
-            dt = base_date + timedelta(days=i)
-            close = price * 1.02
-            k = make_kline_row(base_price=close, base_vol=10000.0, base_date=dt.strftime("%Y%m%d"))
-            k["open"] = price
-            k["high"] = close * 1.02
-            k["low"] = price * 0.98
-            k["close"] = close
-            k["pct_chg"] = 2.0
-            k["is_rise"] = True
-            klines.append(k)
-            price = close
-        for i in range(4):
-            dt = base_date + timedelta(days=10 + i)
-            close = price * 0.95
-            k = make_kline_row(base_price=close, base_vol=30000.0, base_date=dt.strftime("%Y%m%d"))
-            k["open"] = price * 0.98
-            k["high"] = price * 0.99
-            k["low"] = close * 0.97
-            k["close"] = close
-            k["pct_chg"] = -5.0
-            k["is_rise"] = False
-            klines.append(k)
-            price = close
-
-        for i in range(11, len(klines)):
-            signal = detect_brick_signals(klines, i)
-            if signal and signal.strategy == StrategyType.BRICK_BOUNCE:
-                assert signal.action == "WATCH"
-                return
-        pytest.skip("BRICK_BOUNCE 未在当前场景触发")
-
-
-# ==================== 新增卖出/攻击信号测试 ====================
-
-
-class TestDetectBuyExhaustion:
-    """买盘枯竭信号测试"""
-
-    def test_insufficient_data(self):
-        """数据不足时返回 None"""
-        klines = generate_uptrend_klines(n=5)
-        assert detect_buy_exhaustion(klines, 4) is None
-
-    def test_no_uptrend(self):
-        """无上涨趋势时不触发"""
-        klines = generate_downtrend_klines(n=20, start_price=100.0, daily_pct=-0.5)
-        assert detect_buy_exhaustion(klines, 18) is None
-
-    def test_buy_exhaustion_triggers(self):
-        """上涨趋势后连续3天缩量小阳线应触发"""
-        # 先生成上涨趋势（vol_base 要小，让后续缩量容易满足）
-        klines = generate_uptrend_klines(n=15, start_price=100.0, daily_pct=1.0, vol_base=5000)
-        dt = datetime.strptime(klines[-1]["trade_date"], "%Y%m%d") + timedelta(days=1)
-        price = klines[-1]["close"]
-
-        # 连续3天缩量小阳线，vol 从低于 uptrend 最后一天开始递减
-        vol = 4000.0  # uptrend 最后一天 vol ≈ 5700，需低于它
-        for i in range(3):
-            date_str = dt.strftime("%Y%m%d")
-            open_p = price
-            close_p = price * 1.003  # 小阳线，实体 < 1%
-            k = make_kline_row(base_price=close_p, base_vol=vol, base_date=date_str)
-            k["open"] = open_p
-            k["close"] = close_p
-            k["high"] = close_p * 1.002
-            k["low"] = open_p * 0.998
-            k["pct_chg"] = 0.3
-            k["is_rise"] = True
-            klines.append(k)
-            price = close_p
-            vol *= 0.8  # 每天缩量
-            dt += timedelta(days=1)
-
-        signal = detect_buy_exhaustion(klines, len(klines) - 1)
-        assert signal is not None
-        assert signal.strategy == StrategyType.WATCH
-        assert "买盘枯竭" in signal.description
-        assert signal.action == "WATCH"
-
-    def test_not_small_yang(self):
-        """非小阳线（实体>=1%）不触发"""
-        klines = generate_uptrend_klines(n=15, start_price=100.0, daily_pct=1.0)
-        dt = datetime.strptime(klines[-1]["trade_date"], "%Y%m%d") + timedelta(days=1)
-        price = klines[-1]["close"]
-
-        vol = 20000.0
-        for i in range(3):
-            date_str = dt.strftime("%Y%m%d")
-            open_p = price
-            close_p = price * 1.02  # 大阳线，实体 >= 1%
-            k = make_kline_row(base_price=close_p, base_vol=vol, base_date=date_str)
-            k["open"] = open_p
-            k["close"] = close_p
-            k["high"] = close_p * 1.005
-            k["low"] = open_p * 0.995
-            k["pct_chg"] = 2.0
-            k["is_rise"] = True
-            klines.append(k)
-            price = close_p
-            vol *= 0.8
-            dt += timedelta(days=1)
-
-        signal = detect_buy_exhaustion(klines, len(klines) - 1)
-        assert signal is None
-
-    def test_not_shrinking_vol(self):
-        """成交量未缩减不触发"""
-        klines = generate_uptrend_klines(n=15, start_price=100.0, daily_pct=1.0)
-        dt = datetime.strptime(klines[-1]["trade_date"], "%Y%m%d") + timedelta(days=1)
-        price = klines[-1]["close"]
-
-        vol = 20000.0
-        for i in range(3):
-            date_str = dt.strftime("%Y%m%d")
-            open_p = price
-            close_p = price * 1.003
-            k = make_kline_row(base_price=close_p, base_vol=vol, base_date=date_str)
-            k["open"] = open_p
-            k["close"] = close_p
-            k["high"] = close_p * 1.002
-            k["low"] = open_p * 0.998
-            k["pct_chg"] = 0.3
-            k["is_rise"] = True
-            klines.append(k)
-            price = close_p
-            vol *= 1.1  # 放量而非缩量
-            dt += timedelta(days=1)
-
-        signal = detect_buy_exhaustion(klines, len(klines) - 1)
-        assert signal is None
+# ==================== 卖出/攻击信号测试 ====================
 
 
 class TestDetectGreenFatRedThin:
@@ -678,7 +482,7 @@ class TestDetectGreenFatRedThin:
 
         signal = detect_green_fat_red_thin(klines, len(klines) - 1)
         assert signal is not None
-        assert signal.strategy == StrategyType.S1
+        assert signal.strategy == StrategyType.S3
         assert signal.action == "SELL"
         assert signal.priority == Priority.CRITICAL
         assert "绿肥红瘦" in signal.description
@@ -741,7 +545,7 @@ class TestDetectStaircaseDistribution:
 
         signal = detect_staircase_distribution(klines, len(klines) - 1)
         assert signal is not None
-        assert signal.strategy == StrategyType.S1
+        assert signal.strategy == StrategyType.S3
         assert signal.action == "SELL"
         assert signal.priority == Priority.CRITICAL
         assert "阶梯放量下跌" in signal.description
@@ -940,7 +744,7 @@ class TestDetectTopPinwheel:
 
         signal = detect_top_pinwheel(klines, len(klines) - 1)
         assert signal is not None
-        assert signal.strategy == StrategyType.S1
+        assert signal.strategy == StrategyType.S3
         assert signal.action == "SELL"
         assert signal.priority == Priority.CRITICAL
         assert "大风车" in signal.description
@@ -997,9 +801,6 @@ class TestDictToDailyMDCFields:
         row = make_kline_row("600487.SH", "20260717", 58.39, 100000)
         row.update(
             {
-                "boll_upper": 131.56,
-                "boll_mid": 91.59,
-                "boll_lower": 51.62,
                 "rsi6": 15.66,
                 "adx": 42.63,
                 "dmi_plus": 9.41,
@@ -1008,9 +809,6 @@ class TestDictToDailyMDCFields:
         )
         daily = _dict_to_daily([row])[0]
 
-        assert daily.boll_upper == 131.56
-        assert daily.boll_mid == 91.59
-        assert daily.boll_lower == 51.62
         assert daily.rsi6 == 15.66
         assert daily.adx == 42.63
         assert daily.dmi_plus == 9.41
@@ -1032,11 +830,10 @@ class TestDictToDailyMDCFields:
         from modules.strategies.core import _dict_to_daily
 
         row = make_kline_row("600519.SH", "20260717", 1500.0, 10000)
-        assert "boll_lower" not in row
+        assert "rsi6" not in row
 
         daily = _dict_to_daily([row])[0]
 
-        assert daily.boll_lower is None
         assert daily.rsi6 is None
         assert daily.adx is None
         # 资金流字段保持 0 语义（下游存在裸算术，None 会 TypeError）
@@ -1049,23 +846,23 @@ class TestDictToDailyMDCFields:
         from modules.strategies.core import _dict_to_daily
 
         row = make_kline_row("600519.SH", "20260717", 1500.0, 10000)
-        row.update({"boll_lower": 0, "boll_mid": 0, "boll_upper": 0, "rsi6": 0, "adx": 0})
+        row.update({"rsi6": 0, "adx": 0, "dmi_plus": 0})
         daily = _dict_to_daily([row])[0]
 
-        assert daily.boll_lower is None
-        assert daily.boll_mid is None
         assert daily.rsi6 is None
-        # 若 boll_lower 仍是 0，close <= 0*1.02 恒为 False，但 0 参与其它比较会得出错误结论
-        assert not (daily.boll_lower and daily.close <= daily.boll_lower * 1.02)
+        assert daily.adx is None
+        assert daily.dmi_plus is None
+        # 若 rsi6 仍是 0，`rsi6 < 25`（极端超卖）会让没数据的票全员命中加分项
+        assert not ((daily.rsi6 or 50) < 25)
 
     def test_none_indicator_stays_none(self):
         from modules.strategies.core import _dict_to_daily
 
         row = make_kline_row("600519.SH", "20260717", 1500.0, 10000)
-        row.update({"boll_lower": None, "dmi_plus": None, "large_inflow": None})
+        row.update({"rsi6": None, "dmi_plus": None, "large_inflow": None})
         daily = _dict_to_daily([row])[0]
 
-        assert daily.boll_lower is None
+        assert daily.rsi6 is None
         assert daily.dmi_plus is None
         assert daily.large_inflow == 0.0
 
@@ -1128,7 +925,7 @@ class TestDictToDailyMDCFields:
         return rows
 
     def test_b1_mdc_bonus_actually_applies(self):
-        """MDC 字段流到 DailyData 后，B1 的布林下轨/RSI 加分必须真正生效"""
+        """MDC 字段流到 DailyData 后，B1 的 RSI 加分必须真正生效"""
         from modules.strategies.core import _dict_to_daily
 
         rows = self._b1_trigger_rows()
@@ -1136,26 +933,24 @@ class TestDictToDailyMDCFields:
 
         plain = detect_b1(_dict_to_daily(rows), last)
         assert plain is not None
-        assert "触及布林下轨(超跌)" not in plain.description
+        assert "RSI极端超卖" not in plain.description
 
         for r in rows:
-            r["boll_lower"] = r["close"] * 0.99  # 收盘价贴近布林下轨
             r["rsi6"] = 10.0  # 极端超卖
 
         boosted = detect_b1(_dict_to_daily(rows), last)
         assert boosted is not None
         assert boosted.confidence > plain.confidence
-        assert "触及布林下轨(超跌)" in boosted.description
         assert "RSI极端超卖" in boosted.description
 
-    def test_b1_zero_boll_lower_gives_no_bonus(self):
-        """boll_lower=0（indicator_cache 未回填）不得被当成有效价格参与超跌判断"""
+    def test_b1_zero_rsi6_gives_no_bonus(self):
+        """rsi6=0（indicator_cache 未回填）不得被当成"极端超卖"送出加分"""
         from modules.strategies.core import _dict_to_daily
 
         rows = self._b1_trigger_rows()
         for r in rows:
-            r["boll_lower"] = 0
+            r["rsi6"] = 0
 
         signal = detect_b1(_dict_to_daily(rows), len(rows) - 1)
         assert signal is not None
-        assert "触及布林下轨(超跌)" not in signal.description
+        assert "RSI极端超卖" not in signal.description

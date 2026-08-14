@@ -19,7 +19,6 @@ try:
         calculate_bbi,
         calculate_rsi_multi,
         calculate_wr_multi,
-        calculate_bollinger,
         calculate_vol_ratio,
         calculate_macd,
         get_data_mode,  # noqa: F401  可能被外部引用
@@ -30,10 +29,6 @@ try:
         detect_double_line_cross,
         detect_needle_20,
         detect_needle_30,
-        calculate_brick_value,
-        calculate_brick_history,
-        detect_brick_trend,
-        detect_fanbao,
         detect_b1_today,
         detect_b2_today,
         detect_key_k,
@@ -46,7 +41,6 @@ try:
         detect_sb1_detailed,
         detect_b3,
         detect_double_gun,
-        detect_four_brick_system,
         detect_volume_pattern,
         detect_macd_signals,
         calculate_dmi,
@@ -73,7 +67,7 @@ except ImportError:
 #    存的是 _load_from_row 还原出来的对象，只含注册表里那约 35 个字段，
 #    是**残缺**的。它服务于 _load_indicator_cache/_save_indicator_cache，
 #    对应 indicator_cache 表的真正用途：给下游 SQL JOIN（strategies 取
-#    boll/rsi/adx/dmi）和历史快照用。
+#    rsi/adx/dmi）和历史快照用。
 #
 # 2. _analysis_memory_cache —— analyze_stock 完整管道结果的进程内缓存。
 #    存的是跑完 _PIPELINE 的**完整**对象（100+ 字段），key 带上 days，
@@ -114,18 +108,11 @@ _FLOAT_FIELDS: list[str] = [
     "rsi24",
     "wr5",
     "wr10",
-    "boll_mid",
-    "boll_upper",
-    "boll_lower",
-    "boll_width",
-    "boll_position",
     "vol_ratio",
     "zg_white",
     "dg_yellow",
     "rsl_short",
     "rsl_long",
-    "brick_value",
-    "brick_count",
     "prev_high",
     "prev_low",
     "dmi_plus",
@@ -140,8 +127,6 @@ _BOOL_FIELDS: list[str] = [
     "is_gold_cross",
     "is_dead_cross",
     "is_needle_20",
-    "brick_trend_up",
-    "is_fanbao",
     "is_beidou",
     "is_suoliang",
     "is_jiayin_zhenyang",
@@ -151,7 +136,7 @@ _BOOL_FIELDS: list[str] = [
 
 _INT_FIELDS: list[str] = ["sell_score"]
 
-_STR_FIELDS: list[str] = ["brick_trend", "last_b1_date"]
+_STR_FIELDS: list[str] = ["last_b1_date"]
 
 
 def _load_from_row(row) -> IndicatorResult:
@@ -201,11 +186,6 @@ def _build_save_tuple(result: IndicatorResult, today) -> tuple:
         result.rsi24,
         result.wr5,
         result.wr10,
-        result.boll_mid,
-        result.boll_upper,
-        result.boll_lower,
-        result.boll_width,
-        result.boll_position,
         result.vol_ratio,
         result.zg_white,
         result.dg_yellow,
@@ -214,11 +194,6 @@ def _build_save_tuple(result: IndicatorResult, today) -> tuple:
         result.rsl_short,
         result.rsl_long,
         int(result.is_needle_20),
-        result.brick_value,
-        result.brick_trend,
-        result.brick_count,
-        int(result.brick_trend_up),
-        int(result.is_fanbao),
         int(result.is_beidou),
         int(result.is_suoliang),
         int(result.is_jiayin_zhenyang),
@@ -251,18 +226,16 @@ _SAVE_SQL = (
      k, d, j, dif, dea, macd_hist, bbi,
      ma5, ma10, ma20, ma60,
      rsi6, rsi12, rsi24, wr5, wr10,
-     boll_mid, boll_upper, boll_lower, boll_width, boll_position,
      vol_ratio, zg_white, dg_yellow,
      is_gold_cross, is_dead_cross,
      rsl_short, rsl_long, is_needle_20,
-     brick_value, brick_trend, brick_count, brick_trend_up, is_fanbao,
      is_beidou, is_suoliang, is_jiayin_zhenyang, is_jiayang_zhenyin, is_fangliang_yinxian,
      sell_score, sell_reason, signal, signal_desc,
      prev_high, prev_low, dmi_plus, dmi_minus, adx,
      net_lg_mf, net_elg_mf, last_b1_date, last_b1_price,
      last_yidong_date, market_pct_chg, market_dir, updated_at)
     VALUES ("""
-    + ",".join(["?"] * 64)
+    + ",".join(["?"] * 54)
     + """)
 """
 )
@@ -449,12 +422,6 @@ def _step_wr(klines, result):
     result.wr5, result.wr10 = wr5, wr10
 
 
-def _step_bollinger(klines, result):
-    mid, upper, lower, width, pos = calculate_bollinger(klines)
-    result.boll_mid, result.boll_upper = mid, upper
-    result.boll_lower, result.boll_width, result.boll_position = lower, width, pos
-
-
 def _step_vol_ratio(klines, result):
     result.vol_ratio = calculate_vol_ratio(klines)
 
@@ -473,14 +440,6 @@ def _step_needle_20(klines, result):
 
 def _step_needle_30(klines, result):
     result.is_needle_30 = detect_needle_30(klines)
-
-
-def _step_brick(klines, result):
-    result.brick_value = calculate_brick_value(klines)
-    trend, count = calculate_brick_history(klines)
-    result.brick_trend, result.brick_count = trend, count
-    result.brick_trend_up = detect_brick_trend(klines)
-    result.is_fanbao = detect_fanbao(klines)
 
 
 def _step_prev_high_low(klines, result):
@@ -590,14 +549,6 @@ def _step_b3(klines, result):
     result.is_b3 = detect_b3(klines)["is_b3"]
 
 
-def _step_four_brick(klines, result):
-    bs = detect_four_brick_system(klines)
-    result.brick_consecutive = bs["brick_consecutive"]
-    result.brick_action = bs["brick_action"]
-    result.brick_action_desc = bs["brick_action_desc"]
-    result.is_brick_flip_green = bs["is_brick_flip_green"]
-
-
 def _step_sell_score(klines, result):
     score, _, items = calculate_sell_score(klines)
     result.sell_score = score
@@ -612,12 +563,10 @@ _PIPELINE: list[tuple[int, Callable[[Any, Any], None]]] = [
     (0, _step_moving_averages),
     (25, _step_rsi),
     (10, _step_wr),
-    (20, _step_bollinger),
     (0, _step_vol_ratio),
     (115, _step_double_line),
     (22, _step_needle_20),
     (22, _step_needle_30),
-    (10, _step_brick),
     (2, _step_prev_high_low),
     (30, _step_dmi),
     (0, _step_volume_pattern),
@@ -634,7 +583,6 @@ _PIPELINE: list[tuple[int, Callable[[Any, Any], None]]] = [
     (15, _step_double_gun),
     (65, _step_yidong),
     (15, _step_b3),
-    (10, _step_four_brick),
     (0, _step_sell_score),
 ]
 
@@ -645,7 +593,7 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
     始终执行完整的 _PIPELINE，保证返回的 IndicatorResult 字段齐全。
 
     这里**不**读 indicator_cache 表：该表只能往返注册表里那约 35 个字段，
-    而管道会产出 100+ 个字段（b1_score / brick_action / key_k_list / sell_items ...）。
+    而管道会产出 100+ 个字段（b1_score / key_k_list / sell_items ...）。
     一旦短路返回 DB 缓存，"有缓存的票"就会拿到残缺结果。
     加速改由进程内缓存承担：key = (ts_code, trade_date, days)，
     同一进程内重复分析同一只票（例如 monitor 的 scan_watchlist 与
@@ -690,83 +638,6 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
         _analysis_memory_cache.pop(next(iter(_analysis_memory_cache)), None)
     _analysis_memory_cache[mem_key] = copy.copy(result)
     return result
-
-
-def visualize_brick_chart(klines: list[DailyData], lookback: int = 20) -> str:
-    """
-    生成砖型图可视化（文本版）
-
-    用汉字+个数显示砖型图，红*N/绿*N，不表示强弱
-    """
-    if len(klines) < 10:
-        return "数据不足"
-
-    # 计算全量历史砖值序列
-    brick_history = []
-    dates = []
-    closes = []
-    pcts = []
-
-    for i in range(8, len(klines) + 1):
-        sub_klines = klines[:i]
-        brick_val = calculate_brick_value(sub_klines)
-        brick_history.append(brick_val)
-        day = klines[i - 1]
-        dates.append(day.trade_date)
-        closes.append(day.close)
-        pcts.append(day.pct_chg)
-
-    if len(brick_history) < 3:
-        return "数据不足"
-
-    # 只取最近 lookback 天
-    brick_history = brick_history[-lookback:]
-    dates = dates[-lookback:]
-    closes = closes[-lookback:]
-    pcts = pcts[-lookback:]
-
-    # 计算红绿砖：当日砖值 >= 昨日砖值 = 红砖
-    colors = []  # 1=红, -1=绿
-    for i in range(1, len(brick_history)):
-        if brick_history[i] >= brick_history[i - 1]:
-            colors.append(1)
-        else:
-            colors.append(-1)
-
-    if not colors:
-        return "无砖型数据"
-
-    lines = []
-    lines.append(f"  {'日期':<10} {'收盘':>7} {'涨跌%':>7} {'砖值':>6}  砖型图")
-    lines.append("  " + "-" * 45)
-
-    # 计算连续同色砖
-    i = 0
-    while i < len(colors):
-        idx = i + 1
-        color = colors[i]
-        count = 1
-        while i + count < len(colors) and colors[i + count] == color:
-            count += 1
-
-        brick = brick_history[idx]
-        if color == 1:
-            bar = f"红 * {count}"
-        else:
-            bar = f"绿 * {count}"
-
-        pct_str = f"{pcts[idx]:+6.2f}%"
-        line = f"  {dates[idx]}  {closes[idx]:7.2f}  {pct_str}  {brick:6.1f}  {bar}"
-        lines.append(line)
-
-        i += count
-
-    lines.append("  " + "-" * 45)
-    trend_text = "红砖(上涨动量)" if colors[-1] == 1 else "绿砖(下跌动量)"
-    lines.append(f"  趋势: {trend_text}")
-    lines.append(f"  砖值范围: {min(brick_history):.1f} ~ {max(brick_history):.1f}")
-
-    return "\n".join(lines)
 
 
 def format_result(result: IndicatorResult) -> str:
@@ -818,9 +689,6 @@ def format_result(result: IndicatorResult) -> str:
         lines.append(f"[52周最高] {result.high_52w:.2f}  (距现价 +{result.high_52w_dist:.1f}%)")
     lines.append(f"[RSI]  RSI6={result.rsi6:.2f}  RSI12={result.rsi12:.2f}  RSI24={result.rsi24:.2f}")
     lines.append(f"[WR]   WR5={result.wr5:.2f}  WR10={result.wr10:.2f}")
-    lines.append(
-        f"[布林带] 中={result.boll_mid:.2f}  上={result.boll_upper:.2f}  下={result.boll_lower:.2f}  宽={result.boll_width:.2f}%  位置={result.boll_position:.1f}%"
-    )
     lines.append(f"[量比] {result.vol_ratio:.2f}x")
     lines.append("")
     lines.append(
@@ -855,19 +723,6 @@ def format_result(result: IndicatorResult) -> str:
             )
         lines.append("")
 
-    # 砖型图可视化
-    try:
-        klines = get_kline_data(result.ts_code, days=120)
-        if len(klines) >= 10:
-            brick_vis = visualize_brick_chart(klines, lookback=15)
-            lines.append("[砖型图可视化]")
-            lines.append(brick_vis)
-            lines.append("")
-    except Exception:
-        pass
-
-    lines.append(f"[砖型图] Brick={result.brick_value:.2f}  TrendUp:{result.brick_trend_up}  Fanbao:{result.is_fanbao}")
-    lines.append("")
     lines.append("[量价形态]")
     lines.append(f"  倍量: {'OK' if result.is_beidou else '--'}  缩量: {'OK' if result.is_suoliang else '--'}")
     lines.append(
@@ -923,13 +778,6 @@ def format_result(result: IndicatorResult) -> str:
         lines.append("")
     if result.is_b3:
         lines.append("[B3买点] *** B3信号触发")
-        lines.append("")
-
-    # 四块砖交易体系
-    if result.brick_action:
-        flip_marker = " *** 红翻绿止损" if result.is_brick_flip_green else ""
-        lines.append(f"[四块砖体系] 连续{result.brick_consecutive}砖 | 操作: {result.brick_action}{flip_marker}")
-        lines.append(f"  {result.brick_action_desc}")
         lines.append("")
 
     lines.append(f"[防卖飞评分] {result.sell_score}/5")

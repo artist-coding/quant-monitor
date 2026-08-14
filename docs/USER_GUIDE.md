@@ -52,7 +52,7 @@ data_sync.py（数据同步：日线/资金流/财报/指标）
     ↓
 SQLite（本地缓存：8 张核心表，26 万+ 条数据）
     ↓
-indicators/（60+ 技术指标计算：KDJ/MACD/BBI/RSI/WR/布林带/DMI/双线/砖形图...）
+indicators/（60+ 技术指标计算：KDJ/MACD/BBI/RSI/WR/DMI/双线/单针...）
     ↓
 strategies.py（30+ 战法识别：B1/B2/B3/SB1/长安战法/出货五式/三波理论/麒麟会...）
     ↓
@@ -239,8 +239,8 @@ python -m modules.cli analyze 600487.SH --days 60
 
 分析结果包括：
 1. **基础信息**：股票名称、代码、最新价、涨跌幅
-2. **技术指标**：KDJ（K/D/J 值）、MACD（DIF/DEA/柱）、BBI、MA5/10/20/60、RSI、WR、布林带、DMI、量比
-3. **价格形态**：双线战法（白线/黄线位置）、单针下 20、砖形图趋势、双枪信号
+2. **技术指标**：KDJ（K/D/J 值）、MACD（DIF/DEA/柱）、BBI、MA5/10/20/60、RSI、WR、DMI、量比
+3. **价格形态**：双线战法（白线/黄线位置）、单针下 20、双枪信号
 4. **量价信号**：防卖飞评分、出货信号、北斗/缩量/假阴真阳等
 5. **战法识别**：B1/B2/B3/SB1 买点、S1/S2/S3 卖点、长安战法、娜娜图形等
 6. **三波理论**：建仓波/拉升波/冲刺波识别
@@ -680,7 +680,7 @@ python -m pytest tests/test_screener.py -v
 | 测试文件 | 覆盖内容 | 用例数 |
 |---------|---------|--------|
 | `test_database.py` | 数据库连接、事务、表增删、幂等性 | ~15 |
-| `test_indicators.py` | 56+ 指标计算（MA/EMA/KDJ/MACD/布林带/砖形图/DMI...） | ~56 |
+| `test_indicators.py` | 56+ 指标计算（MA/EMA/KDJ/MACD/RSI/DMI...） | ~56 |
 | `test_strategies.py` | B1/B2/B3/SB1/长安/娜娜/异动地量/全量检测 | ~15 |
 | `test_screener.py` | 评分模型、趋势/量价/风险评分 | ~15 |
 | `test_setup_wizard.py` | 环境检测、模式切换 | ~8 |
@@ -864,7 +864,7 @@ A: SKILL.md 设计了首次激活时的模式检查流程，首次使用时会�
 
 #### indicator_cache（技术指标缓存）
 
-每日快照，包含 60+ 指标的每日计算结果：KDJ、MACD、BBI、MA、RSI、WR、布林带、双线、砖形图、DMI、量比、信号等 60+ 列。
+每日快照，包含 60+ 指标的每日计算结果：KDJ、MACD、BBI、MA、RSI、WR、双线、砖形图、DMI、量比、信号等 60+ 列。
 
 #### moneyflow（资金流向）
 
@@ -933,7 +933,6 @@ A: SKILL.md 设计了首次激活时的模式检查流程，首次使用时会�
 | RSI | 6/12/24 递推 SMA | 相对强弱指标 |
 | WR | 5/10 | 威廉指标 |
 | BBI | 4 参数 | 多空指标 |
-| 布林带 | 20,2 | 上/中/下轨 + 宽度 + 位置 |
 | DMI | 14 | +DI/-DI/ADX |
 
 ### 18.3 特色指标

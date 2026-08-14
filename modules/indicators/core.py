@@ -71,11 +71,8 @@ class DailyData:
 
     # MDC 多维验证字段（来自 indicator_cache / moneyflow 联表，由 strategies.core._dict_to_daily 填充）
     #
-    # 指标类默认 None 而非 0：策略里写的是 `if boll_lower and ...`，
-    # 0 会被当成"有数据"参与 `close <= boll_lower * 1.02` 的比较并得出错误结论。
-    boll_upper: float | None = None
-    boll_mid: float | None = None
-    boll_lower: float | None = None
+    # 指标类默认 None 而非 0：策略里写的是 `(rsi6 or 50) < 25`，
+    # 0 会被当成"有数据"参与比较，让没数据的票全员命中"极端超卖"加分。
     rsi6: float | None = None
     adx: float | None = None
     dmi_plus: float | None = None
@@ -150,13 +147,6 @@ class IndicatorResult:
     wr5: float = 0
     wr10: float = 0
 
-    # 布林带
-    boll_mid: float = 0  # 中轨 = MA20
-    boll_upper: float = 0  # 上轨 = 中轨 + 2*STD
-    boll_lower: float = 0  # 下轨 = 中轨 - 2*STD
-    boll_width: float = 0  # 布林带宽度
-    boll_position: float = 0  # 股价在布林带中的位置 (0-100%)
-
     # 量比
     vol_ratio: float = 0  # 量比 = 当前量 / 5日均量
 
@@ -179,13 +169,6 @@ class IndicatorResult:
     yidong_type: str = ""  # 异动类型：詹姆斯级/徐杰级
     yidong_vol_ratio: float = 0  # 异动量比
     yidong_above_60d: bool = False  # 是否从60日线附近起来
-
-    # ========== 砖型图系统 ==========
-    brick_value: float = 0  # 砖型图数值
-    brick_trend: str = "NEUTRAL"  # 趋势: RED(红砖)/GREEN(绿砖)/NEUTRAL(中性)
-    brick_count: int = 0  # 连续砖数
-    brick_trend_up: bool = False  # 命值趋势上升
-    is_fanbao: bool = False  # 精准反包信号（2/3位置）
 
     # 量价信号
     is_beidou: bool = False  # 倍量
@@ -273,12 +256,6 @@ class IndicatorResult:
 
     # B3买点
     is_b3: bool = False  # B3买点信号
-
-    # 四块砖交易体系
-    brick_consecutive: int = 0  # 当前连续砖数
-    brick_action: str = ""  # 操作建议: 减仓/止损/持有/观望/禁止抄底
-    brick_action_desc: str = ""  # 操作描述
-    is_brick_flip_green: bool = False  # 红砖刚翻绿（止损信号）
 
     # 异动记录
     last_yidong_date: str = ""
@@ -797,57 +774,6 @@ def calculate_wr_multi(klines: list[DailyData]) -> tuple[float, float]:
     wr5 = calculate_wr(klines, 5) if len(klines) >= 5 else -50
     wr10 = calculate_wr(klines, 10) if len(klines) >= 10 else -50
     return wr5, wr10
-
-
-def calculate_bollinger(
-    klines: list[DailyData], period: int = 20, std_dev: float = 2.0
-) -> tuple[float, float, float, float, float]:
-    """
-    计算布林带
-
-    通达信公式:
-    BOLL = MA(CLOSE, N)
-    UB = BOLL + 2 * STD(CLOSE, N)
-    LB = BOLL - 2 * STD(CLOSE, N)
-
-    Args:
-        klines: K线数据
-        period: 周期，默认20
-        std_dev: 标准差倍数，默认2
-
-    Returns:
-        (中轨, 上轨, 下轨, 带宽, 位置%)
-    """
-    if len(klines) < period:
-        return 0, 0, 0, 0, 50
-
-    closes = [k.close for k in klines]
-    recent_closes = closes[-period:]
-
-    # 计算中轨 (MA20)
-    mid = sum(recent_closes) / period
-
-    # 计算标准差
-    variance = sum((c - mid) ** 2 for c in recent_closes) / period
-    std = variance**0.5
-
-    upper = mid + std_dev * std
-    lower = mid - std_dev * std
-
-    # 带宽：(上轨 - 下轨) / 中轨 * 100
-    if mid > 0:
-        width = (upper - lower) / mid * 100
-    else:
-        width = 0
-
-    # 位置：当前价格在布林带中的位置
-    current_close = closes[-1]
-    if upper != lower:
-        position = (current_close - lower) / (upper - lower) * 100
-    else:
-        position = 50
-
-    return round(mid, 2), round(upper, 2), round(lower, 2), round(width, 2), round(position, 1)
 
 
 def calculate_vol_ratio(klines: list[DailyData], period: int = 5) -> float:

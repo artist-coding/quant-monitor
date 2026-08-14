@@ -1,38 +1,5 @@
 from typing import Any
 from ..core import DailyData, calculate_kdj
-from .brick import calculate_brick_value
-
-
-def detect_fanbao(klines: list[DailyData]) -> bool:
-    """
-    检测精准反包信号
-
-    条件：
-    1. 今天红柱（砖型图上涨）
-    2. 昨天绿柱（砖型图下跌）
-    3. 今天砖型图超过昨日绿柱2/3位置
-    """
-    if len(klines) < 4:
-        return False
-
-    brick_today = calculate_brick_value(klines)
-    brick_yesterday = calculate_brick_value(klines[:-1])
-    brick_before = calculate_brick_value(klines[:-2]) if len(klines) >= 3 else 0
-
-    # 今天红柱
-    is_red = brick_today > brick_yesterday
-    # 昨天绿柱
-    is_green_yesterday = brick_yesterday < brick_before
-    # 昨天绿柱的实体高度
-    lzgd = max(brick_yesterday, brick_before) - min(brick_yesterday, brick_before)
-    # 反包阈值 = 昨日低点 + 2/3高度
-    zddd = min(brick_yesterday, brick_before)
-    fbwz = zddd + lzgd * 2 / 3
-
-    # 满足2/3反包
-    is_fanbao = brick_today > fbwz if lzgd > 0 else False
-
-    return is_red and is_green_yesterday and is_fanbao
 
 
 def detect_volume_pattern(today: DailyData, yesterday: DailyData | None = None) -> dict[str, bool]:

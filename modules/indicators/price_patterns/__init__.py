@@ -26,13 +26,6 @@ from .bull_rope import detect_bull_rope
 
 from .sandglass import calculate_sandglass_score
 
-from .brick import (
-    calculate_brick_value,
-    calculate_brick_history,
-    detect_brick_trend,
-    detect_four_brick_system,
-)
-
 from .key_candles import (
     detect_key_k,
     detect_violence_k,
@@ -42,7 +35,6 @@ from .key_candles import (
 )
 
 from .screener_helper import (
-    detect_fanbao,
     detect_volume_pattern,
     detect_didi,
     calculate_zuchong_target,
@@ -62,10 +54,6 @@ __all__ = [
     "detect_double_gun",
     "detect_sb1_detailed",
     "calculate_dmi",
-    "calculate_brick_value",
-    "calculate_brick_history",
-    "detect_brick_trend",
-    "detect_fanbao",
     "detect_volume_pattern",
     "detect_didi",
     "calculate_zuchong_target",
@@ -85,7 +73,6 @@ __all__ = [
     "detect_breathing_structure",
     "detect_sb1",
     "detect_b3",
-    "detect_four_brick_system",
     "detect_divergence",
     "detect_macd_signals",
     "detect_centipede_pattern",

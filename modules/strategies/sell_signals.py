@@ -1,6 +1,6 @@
 from typing import Optional
 from .core import StrategyType, StrategySignal, Priority, _ensure_daily_klines, _get_macd_dif
-from ..indicators import detect_four_brick_system, DailyData
+from ..indicators import DailyData
 
 
 def detect_s1(klines: list[DailyData], index: int, kirin_context: dict | None = None) -> StrategySignal | None:
@@ -15,7 +15,6 @@ def detect_s1(klines: list[DailyData], index: int, kirin_context: dict | None = 
     MDC 验证项：
     - 处于麒麟会“派发”阶段 (+20%)
     - 主力大单大幅净流出 (+15%)
-    - 跌破布林中轨 (-10%)
     """
     if index < 20:
         return None
@@ -79,13 +78,6 @@ def detect_s1(klines: list[DailyData], index: int, kirin_context: dict | None = 
     if outflow_ratio > 0.05:
         confidence += 0.15
         mdc_details.append(f"主力大单强力撤离({outflow_ratio * 100:.1f}%)")
-
-    # 布林验证
-    boll_mid_today = getattr(today, "boll_mid", None)
-    boll_mid_yesterday = getattr(yesterday, "boll_mid", None)
-    if boll_mid_today and boll_mid_yesterday and yesterday.close > boll_mid_yesterday and today.close < boll_mid_today:
-        confidence += 0.10
-        mdc_details.append("跌破布林中轨(趋势走坏)")
 
     description = "S1逃顶(丑陋大绿帽) " + ", ".join(mdc_details)
     if kirin_context and kirin_context.get("stage") == "派发" and chuhuo_score >= 2:
@@ -248,135 +240,12 @@ def detect_s3(klines: list[DailyData], index: int) -> StrategySignal | None:
     )
 
 
-def detect_brick_signals(klines: list[DailyData], index: int) -> StrategySignal | None:
-    """
-    检测砖形图信号
-
-    基于四块砖交易体系，检测状态变化点：
-    - 红砖翻绿 → 止损 (BRICK_EXIT)
-    - 红砖满4块 → 减仓 (BRICK_REDUCE)
-    - 绿砖满4块 → 可能止跌观察 (BRICK_BOUNCE)
-
-    只在状态变化当天触发，避免连续多天重复信号。
-    """
-    if index < 11:
-        return None
-
-    klines = _ensure_daily_klines(klines)
-    today = klines[index]
-
-    # 直接检测今天状态
-    brick_today = detect_four_brick_system(klines[: index + 1])
-
-    # 只关注重要操作状态
-    action_today = brick_today.get("brick_action", "观望")
-    if action_today in ("观望", "持有"):
-        return None
-
-    # 检测昨天状态（用于判断是否为状态变化首日）
-    brick_yesterday = detect_four_brick_system(klines[:index])
-    action_yesterday = brick_yesterday.get("brick_action", "观望")
-
-    # 如果昨天已经是同样的重要状态，说明不是首日，不重复触发
-    if action_yesterday == action_today:
-        return None
-
-    # 映射到 StrategyType
-    strategy_map = {
-        "止损": (StrategyType.BRICK_EXIT, "SELL", 0.85, Priority.CRITICAL),
-        "减仓": (StrategyType.BRICK_REDUCE, "SELL", 0.75, Priority.OBSERVE),
-        "禁止抄底": (StrategyType.BRICK_BOUNCE, "WATCH", 0.7, Priority.OBSERVE),
-    }
-
-    if action_today not in strategy_map:
-        return None
-
-    strategy_type, action, confidence, priority = strategy_map[action_today]
-
-    return StrategySignal(
-        ts_code=today.ts_code,
-        trade_date=today.trade_date,
-        strategy=strategy_type,
-        confidence=confidence,
-        description=brick_today.get("brick_action_desc", action_today),
-        details={
-            "brick_consecutive": brick_today.get("brick_consecutive", 0),
-            "is_brick_flip_green": brick_today.get("is_brick_flip_green", False),
-            "prev_action": action_yesterday,
-            "current_action": action_today,
-        },
-        action=action,
-        stop_loss=today.low,
-        priority=priority,
-    )
-
-
-def detect_buy_exhaustion(klines: list[DailyData], index: int) -> StrategySignal | None:
-    """
-    检测买盘枯竭信号（上涨动能耗尽预警）
-
-    来源：knowledge/key-candles.md
-
-    触发条件（在上涨趋势中）：
-    1. 上涨趋势：index-10 到 index-3 期间有明显上涨（>5%）
-    2. 连续3天出现缩量小阳线
-       - 小阳线：实体 (close-open)/open < 1%
-       - 缩量：每天成交量 < 前一天
-    """
-    if index < 13:
-        return None
-
-    klines = _ensure_daily_klines(klines)
-    today = klines[index]
-
-    # 1. 检查上涨趋势：index-10 到 index-3 期间涨幅 > 5%
-    try:
-        trend_low = min(k.low for k in klines[index - 10 : index - 2])
-        trend_high = max(k.high for k in klines[index - 10 : index - 2])
-        if trend_low <= 0:
-            return None
-        up_pct = (trend_high - trend_low) / trend_low
-        if up_pct < 0.05:
-            return None
-    except (ValueError, IndexError):
-        return None
-
-    # 2. 检查最近3天是否为缩量小阳线
-    for i in range(index - 2, index + 1):
-        k = klines[i]
-        # 小阳线：close >= open 且实体比例 < 1%
-        if k.close < k.open:
-            return None
-        if k.open <= 0:
-            return None
-        body_pct = (k.close - k.open) / k.open
-        if body_pct >= 0.01:
-            return None
-
-        # 缩量：每天成交量 < 前一天
-        if i > 0 and k.vol >= klines[i - 1].vol:
-            return None
-
-    return StrategySignal(
-        ts_code=today.ts_code,
-        trade_date=today.trade_date,
-        strategy=StrategyType.WATCH,
-        confidence=0.65,
-        description="买盘枯竭：连续3天缩量小阳线，上涨动能不足",
-        details={
-            "trend_up_pct": round(up_pct * 100, 2),
-            "last_3_days_vol": [klines[i].vol for i in range(index - 2, index + 1)],
-        },
-        action="WATCH",
-        priority=Priority.OBSERVE,
-    )
-
-
 def detect_green_fat_red_thin(klines: list[DailyData], index: int) -> StrategySignal | None:
     """
     检测绿肥红瘦出货信号（主力出货）
 
     来源：knowledge/exit-strategies.md、knowledge/market-macro.md
+    归类为 S3（清仓级）：逐步放飞阶梯中触发即全部卖出。
 
     触发条件：
     近5天内阴线平均成交量 > 阳线平均成交量的1.5倍
@@ -416,7 +285,7 @@ def detect_green_fat_red_thin(klines: list[DailyData], index: int) -> StrategySi
     return StrategySignal(
         ts_code=today.ts_code,
         trade_date=today.trade_date,
-        strategy=StrategyType.S1,
+        strategy=StrategyType.S3,
         confidence=0.80,
         description="绿肥红瘦：阴线量能远超阳线，主力出货",
         details={
@@ -436,6 +305,7 @@ def detect_staircase_distribution(klines: list[DailyData], index: int) -> Strate
     检测阶梯放量下跌信号（阶梯式出货）
 
     来源：knowledge/exit-strategies.md
+    归类为 S3（清仓级）：逐步放飞阶梯中触发即全部卖出。
 
     触发条件：
     连续3+天每天量增价跌
@@ -462,7 +332,7 @@ def detect_staircase_distribution(klines: list[DailyData], index: int) -> Strate
     return StrategySignal(
         ts_code=today.ts_code,
         trade_date=today.trade_date,
-        strategy=StrategyType.S1,
+        strategy=StrategyType.S3,
         confidence=0.85,
         description=f"阶梯放量下跌：连续{consecutive}天量增价跌，主力出货",
         details={
@@ -477,9 +347,10 @@ def detect_staircase_distribution(klines: list[DailyData], index: int) -> Strate
 
 def detect_top_pinwheel(klines: list[DailyData], index: int) -> StrategySignal | None:
     """
-    检测顶部大风车信号（S1 具体形态）
+    检测顶部大风车信号
 
     来源：knowledge/exit-strategies.md
+    归类为 S3（清仓级）：逐步放飞阶梯中触发即全部卖出。
 
     触发条件：
     1. 在高位（近20天最高价附近，距高点<5%）
@@ -526,9 +397,9 @@ def detect_top_pinwheel(klines: list[DailyData], index: int) -> StrategySignal |
     return StrategySignal(
         ts_code=today.ts_code,
         trade_date=today.trade_date,
-        strategy=StrategyType.S1,
+        strategy=StrategyType.S3,
         confidence=0.85,
-        description="顶部大风车：高位长上下影阴线，S1形态",
+        description="顶部大风车：高位长上下影阴线，清仓形态",
         details={
             "recent_high": round(recent_high, 2),
             "body": round(body, 2),

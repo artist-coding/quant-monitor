@@ -1,6 +1,7 @@
 """股票分析服务 — 封装 modules 层的分析逻辑"""
 
 import logging
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -80,11 +81,68 @@ def get_full_analysis(ts_code: str, days: int = 120) -> dict[str, Any]:
     }
 
 
-def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
-    """获取 K 线图表数据（ECharts 列式格式）"""
+def _aggregate_weekly(klines: list) -> list:
+    """把日线 DailyData 聚合成周线序列（按 ISO 周分组）。
+
+    周线 bar 的口径：开=周内首日开盘，收=周内末日收盘，高/低=周内极值，
+    量/额=周内求和，trade_date 取周内最后一个交易日（与行情软件一致）。
+    pct_chg 相对上一周收盘计算——下游的量柱着色和悬浮框都读它。
+    """
+    from modules.indicators.core import DailyData
+
+    if not klines:
+        return []
+
+    groups: list[list] = []
+    current_key = None
+    for k in klines:
+        iso = datetime.strptime(k.trade_date, "%Y%m%d").isocalendar()
+        key = (iso[0], iso[1])
+        if key != current_key:
+            groups.append([])
+            current_key = key
+        groups[-1].append(k)
+
+    weekly: list = []
+    prev_close = 0.0
+    for bars in groups:
+        close = bars[-1].close
+        vol = sum(b.vol for b in bars)
+        pct = (close - prev_close) / prev_close * 100 if prev_close > 0 else 0.0
+        prev_vol = weekly[-1].vol if weekly else vol
+        weekly.append(
+            DailyData(
+                ts_code=bars[0].ts_code,
+                trade_date=bars[-1].trade_date,
+                open=bars[0].open,
+                high=max(b.high for b in bars),
+                low=min(b.low for b in bars),
+                close=close,
+                vol=vol,
+                amount=sum(b.amount for b in bars),
+                pct_chg=round(pct, 2),
+                prev_close=prev_close,
+                is_rise=close > prev_close > 0,
+                is_beidou=vol >= prev_vol * 2,
+                is_suoliang=vol <= prev_vol * 0.5,
+                is_yinxian=0 < close < prev_close,
+            )
+        )
+        prev_close = close
+    return weekly
+
+
+def get_kline_chart_data(ts_code: str, days: int = 120, period: str = "daily") -> dict[str, Any]:
+    """获取 K 线图表数据（ECharts 列式格式）
+
+    Args:
+        period: "daily" 日线 / "weekly" 周线。周线由日线聚合而来，
+            白线/黄线/BBI/KDJ/MACD 全部在周线序列上重算，口径与日线公式相同。
+            战法信号是日线口径的，周线视图不返回 signal_markers。
+    """
     from modules.indicators.data_layer import get_kline_data
     from modules.indicators.core import (
-        calculate_ma, calculate_bbi, calculate_bollinger,
+        calculate_ma, calculate_bbi,
         calculate_kdj, calculate_macd,
     )
     from modules.indicators.price_patterns import (
@@ -92,10 +150,14 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
     )
     from modules.strategies import detect_all_strategies
 
-    # 多取历史数据用于指标计算（黄线需要 114 天 MA114）
-    # 展示最近 days 天，但用更多历史数据计算指标
-    extra_days = max(days + 130, 250)
-    all_klines = get_kline_data(ts_code, days=extra_days)
+    # 多取历史数据用于指标计算（黄线需要 114 根 MA114）
+    # 展示最近 days 根，但用更多历史数据计算指标
+    extra_bars = max(days + 130, 250)
+    if period == "weekly":
+        # 周线的一根 bar 约消耗 5 个交易日，日线取数窗口按 5 倍放大
+        all_klines = _aggregate_weekly(get_kline_data(ts_code, days=extra_bars * 5))
+    else:
+        all_klines = get_kline_data(ts_code, days=extra_bars)
     if not all_klines:
         return {"ts_code": ts_code, "dates": [], "ohlc": [], "volumes": [],
                 "pct_chgs": [], "overlays": {}, "signal_markers": [],
@@ -134,11 +196,11 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
     n = len(closes)
     overlays: dict[str, list[float | None]] = {}
 
-    # MA
-    for period, key in [(5, "ma5"), (10, "ma10"), (20, "ma20"), (60, "ma60")]:
+    # MA（循环变量不能叫 period——会遮蔽同名的日线/周线参数）
+    for win, key in [(5, "ma5"), (10, "ma10"), (20, "ma20"), (60, "ma60")]:
         ma_vals: list[float | None] = [None] * n
-        for i in range(period - 1, n):
-            ma_vals[i] = round(sum(closes[i - period + 1:i + 1]) / period, 2)
+        for i in range(win - 1, n):
+            ma_vals[i] = round(sum(closes[i - win + 1:i + 1]) / win, 2)
         overlays[key] = ma_vals
 
     # BBI
@@ -151,26 +213,15 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
         bbi_vals[i] = round((ma3 + ma6 + ma12 + ma24) / 4, 2)
     overlays["bbi"] = bbi_vals
 
-    # 布林带
-    boll_mid: list[float | None] = [None] * n
-    boll_upper: list[float | None] = [None] * n
-    boll_lower: list[float | None] = [None] * n
-    for i in range(19, n):
-        window = closes[i - 19:i + 1]
-        mid = sum(window) / 20
-        std = (sum((x - mid) ** 2 for x in window) / 20) ** 0.5
-        boll_mid[i] = round(mid, 2)
-        boll_upper[i] = round(mid + 2 * std, 2)
-        boll_lower[i] = round(mid - 2 * std, 2)
-    overlays["boll_mid"] = boll_mid
-    overlays["boll_upper"] = boll_upper
-    overlays["boll_lower"] = boll_lower
+    # 展示窗口在全量序列中的起始下标。klines = all_klines[-days:]，
+    # 但 bar 数不足 days 时（新股/周线）直接用 days 会得到负下标，切片全错位。
+    base = len(all_klines) - n
 
     # 白线 / 黄线（双线战法）
     try:
         white_line = []
         yellow_line = []
-        for i in range(len(all_klines) - days, len(all_klines)):
+        for i in range(base, len(all_klines)):
             try:
                 # 两个函数都只接受 klines 一个参数，靠切片表达"截至第 i 根"。
                 # 曾经这里传的是 (all_klines, i)，每轮都抛 TypeError 被下面的
@@ -187,8 +238,8 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
         overlays["yellow_line"] = yellow_line
     except Exception:
         logger.warning("白线/黄线计算失败: %s", ts_code, exc_info=True)
-        overlays["white_line"] = [None] * days
-        overlays["yellow_line"] = [None] * days
+        overlays["white_line"] = [None] * n
+        overlays["yellow_line"] = [None] * n
 
     # ── KDJ 时间序列 ── 用全量历史数据计算
     kdj_k: list[float | None] = [None] * n
@@ -197,8 +248,8 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
     try:
         from modules.indicators.core import precompute_kdj_sequence
         kdj_full = precompute_kdj_sequence(all_klines)
-        # 截取最后 days 天
-        for i, (k_val, d_val, j_val) in enumerate(kdj_full[-days:]):
+        # 截取展示窗口
+        for i, (k_val, d_val, j_val) in enumerate(kdj_full[base:]):
             kdj_k[i] = round(k_val, 2)
             kdj_d[i] = round(d_val, 2)
             kdj_j[i] = round(j_val, 2)
@@ -222,7 +273,7 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
         from modules.indicators.core import precompute_macd_sequence
         dif_full, dea_full, macd_full = precompute_macd_sequence(all_klines)
         for i in range(n):
-            idx = len(all_klines) - days + i
+            idx = base + i
             if dif_full[idx] is not None:
                 macd_dif[i] = round(dif_full[idx], 4)
             if dea_full[idx] is not None:
@@ -232,111 +283,26 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
     except Exception:
         pass
 
-    # ─ 砖型图时间序列
-    brick_values: list[float | None] = [None] * n
-    brick_colors: list[int | None] = [None] * n
-    try:
-        from modules.indicators.price_patterns import calculate_brick_value
-        for i in range(n):
-            idx = len(all_klines) - days + i
-            sub_klines = all_klines[:idx + 1]
-            try:
-                val = calculate_brick_value(sub_klines)
-                brick_values[i] = round(val, 2) if val else None
-                # 判断红绿：大于等于前一天为红(1)，小于为绿(-1)
-                if i > 0 and brick_values[i] is not None and brick_values[i - 1] is not None:
-                    brick_colors[i] = 1 if brick_values[i] >= brick_values[i - 1] else -1
-                else:
-                    brick_colors[i] = 1 # 默认红色
-            except Exception:
-                pass
-    except Exception:
-        logger.warning("砖型图计算失败: %s", ts_code, exc_info=True)
-
-    # 信号标注
+    # 信号标注（战法信号是日线口径，周线视图不标）
     signal_markers = []
-    try:
-        signals = detect_all_strategies(ts_code, days=days)
-        date_set = set(dates)
-        for s in signals[:30]:  # 最多取 30 个信号
-            if s.trade_date in date_set:
-                signal_markers.append({
-                    "date": s.trade_date,
-                    "type": s.strategy.value,
-                    "price": s.price or 0,
-                    "action": s.action,
-                })
-    except Exception:
-        logger.warning("信号标注获取失败: %s", ts_code, exc_info=True)
+    if period != "weekly":
+        try:
+            signals = detect_all_strategies(ts_code, days=days)
+            date_set = set(dates)
+            for s in signals[:30]:  # 最多取 30 个信号
+                if s.trade_date in date_set:
+                    signal_markers.append({
+                        "date": s.trade_date,
+                        "type": s.strategy.value,
+                        "price": s.price or 0,
+                        "action": s.action,
+                    })
+        except Exception:
+            logger.warning("信号标注获取失败: %s", ts_code, exc_info=True)
 
-    # ── 计算主力阶段序列与多空呼吸波 ──
-    waves_sequence = []
-    kirin_sequence = []
-    raw_breathing = []
-
-    try:
-        from modules.indicators.wave_theory import detect_three_waves
-        from modules.indicators.kirin_detector import detect_kirin_stage
-
-        for i in range(days):
-            idx = len(all_klines) - days + i
-            sub_klines = all_klines[:idx+1]
-
-            # 1. 三波理论阶段
-            try:
-                w_res = detect_three_waves(sub_klines)
-                waves_sequence.append(w_res.get("wave", "未知"))
-            except Exception:
-                waves_sequence.append("未知")
-
-            # 2. 麒麟会阶段
-            try:
-                k_res = detect_kirin_stage(sub_klines)
-                kirin_sequence.append(k_res.get("stage", "未知"))
-            except Exception:
-                kirin_sequence.append("未知")
-
-            # 3. 呼吸波原始分值
-            if len(sub_klines) < 2:
-                raw_breathing.append(0.0)
-                continue
-
-            today_bar = sub_klines[-1]
-            prev_bar = sub_klines[-2]
-
-            if prev_bar.vol <= 0:
-                raw_breathing.append(0.0)
-                continue
-
-            vol_ratio = today_bar.vol / prev_bar.vol
-            pct = today_bar.pct_chg if today_bar.pct_chg is not None else 0.0
-
-            if pct > 0 and vol_ratio > 1:
-                # 放量涨：呼气
-                raw_breathing.append(min(vol_ratio - 1.0, 3.0))
-            elif pct < 0 and vol_ratio < 1:
-                # 缩量跌：吸气
-                raw_breathing.append(-min((1.0 / vol_ratio) - 1.0, 3.0))
-            elif pct < 0 and vol_ratio >= 1:
-                # 放量跌：派发/恐慌
-                raw_breathing.append(-0.5 * min(vol_ratio, 2.0))
-            else:
-                # 缩量涨（量价背离）
-                raw_breathing.append(0.1)
-    except Exception:
-        logger.exception("计算主力阶段序列与多空呼吸波失败: %s", ts_code)
-        waves_sequence = ["未知"] * days
-        kirin_sequence = ["未知"] * days
-        raw_breathing = [0.0] * days
-
-    # 4. 对呼吸原始分值做 5 日平滑
-    breathing_wave = []
-    for i in range(len(raw_breathing)):
-        start = max(0, i - 4)
-        window = raw_breathing[start:i+1]
-        avg = sum(window) / len(window)
-        breathing_wave.append(round(avg, 2))
-
+    # 麒麟阶段/三波理论背景与主力呼吸波已从前端 K 线图移除，
+    # 相应的逐日重算（detect_three_waves + detect_kirin_stage × N 天）一并删除。
+    # 字段保留为空列表，兼容旧版响应模型。
     return {
         "ts_code": ts_code,
         "name": name,
@@ -348,10 +314,9 @@ def get_kline_chart_data(ts_code: str, days: int = 120) -> dict[str, Any]:
         "signal_markers": signal_markers,
         "kdj": {"k": kdj_k, "d": kdj_d, "j": kdj_j},
         "macd": {"dif": macd_dif, "dea": macd_dea, "hist": macd_hist},
-        "brick": {"values": brick_values, "colors": brick_colors},
-        "waves_sequence": waves_sequence,
-        "kirin_sequence": kirin_sequence,
-        "breathing_wave": breathing_wave,
+        "waves_sequence": [],
+        "kirin_sequence": [],
+        "breathing_wave": [],
     }
 
 
@@ -401,11 +366,6 @@ def _build_indicators(result, diagnosis) -> dict:
         },
         "bbi": result.bbi,
         "rsi": {"rsi6": result.rsi6, "rsi12": result.rsi12, "rsi24": result.rsi24},
-        "bollinger": {
-            "mid": result.boll_mid, "upper": result.boll_upper,
-            "lower": result.boll_lower, "width": result.boll_width,
-            "position": result.boll_position,
-        },
         "ma": {
             "ma5": result.ma5, "ma10": result.ma10,
             "ma20": result.ma20, "ma60": result.ma60,
@@ -416,11 +376,6 @@ def _build_indicators(result, diagnosis) -> dict:
         "double_line": {
             "white": result.zg_white, "yellow": result.dg_yellow,
             "is_gold_cross": result.is_gold_cross, "is_dead_cross": result.is_dead_cross,
-        },
-        "brick": {
-            "value": result.brick_value, "trend": result.brick_trend,
-            "count": result.brick_count, "trend_up": result.brick_trend_up,
-            "is_fanbao": result.is_fanbao,
         },
         "dmi": {"plus": result.dmi_plus, "minus": result.dmi_minus, "adx": result.adx},
         "signal": result.signal.value if hasattr(result.signal, "value") else str(result.signal),

@@ -27,8 +27,6 @@ from .sell_signals import (
     detect_s1,
     detect_s2,
     detect_s3,
-    detect_brick_signals,
-    detect_buy_exhaustion,
     detect_green_fat_red_thin,
     detect_staircase_distribution,
     detect_top_pinwheel,
@@ -196,27 +194,17 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> list[StrategySignal]
         if signal:
             signals.append(signal)
 
-        # 砖形图信号
-        signal = detect_brick_signals(daily_klines, i)
-        if signal:
-            signals.append(signal)
-
-        # 买盘枯竭
-        signal = detect_buy_exhaustion(daily_klines, i)
-        if signal:
-            signals.append(signal)
-
-        # 绿肥红瘦出货
+        # 绿肥红瘦出货（S3 清仓级）
         signal = detect_green_fat_red_thin(daily_klines, i)
         if signal:
             signals.append(signal)
 
-        # 阶梯放量下跌
+        # 阶梯放量下跌（S3 清仓级）
         signal = detect_staircase_distribution(daily_klines, i)
         if signal:
             signals.append(signal)
 
-        # 顶部大风车
+        # 顶部大风车（S3 清仓级）
         signal = detect_top_pinwheel(daily_klines, i)
         if signal:
             signals.append(signal)

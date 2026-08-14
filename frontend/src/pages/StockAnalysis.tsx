@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useStockAnalysis, useKlineData } from '../hooks/useStockAnalysis';
+import type { KlinePeriod } from '../api/stock';
 import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import KlineChart from '../components/charts/KlineChart';
@@ -13,8 +15,9 @@ import { formatNumber, formatPct, pctColor } from '../lib/formatters';
 
 export default function StockAnalysis() {
   const { tsCode = '' } = useParams<{ tsCode: string }>();
+  const [klinePeriod, setKlinePeriod] = useState<KlinePeriod>('daily');
   const { data: analysis, isLoading: loadingAnalysis, error: analysisError } = useStockAnalysis(tsCode);
-  const { data: klineData, isLoading: loadingKline } = useKlineData(tsCode);
+  const { data: klineData, isLoading: loadingKline } = useKlineData(tsCode, 120, klinePeriod);
 
   if (loadingAnalysis || loadingKline) {
     return (
@@ -78,8 +81,10 @@ export default function StockAnalysis() {
       </div>
 
       {/* ============ K 线图 - 全宽 ============ */}
-      <Card title="K 线图 · 白线/黄线 · KDJ · MACD · 砖型图">
-        {klineData && <KlineChart data={klineData} height={780} />}
+      <Card title="K 线图 · 白线/黄线 · KDJ · MACD">
+        {klineData && (
+          <KlineChart data={klineData} height={780} period={klinePeriod} onPeriodChange={setKlinePeriod} />
+        )}
       </Card>
 
       {/* ============ Z哥点评 - Hero 全宽 ============ */}

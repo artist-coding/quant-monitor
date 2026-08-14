@@ -6,8 +6,16 @@ export async function fetchStockAnalysis(tsCode: string, days = 120): Promise<St
   return data;
 }
 
-export async function fetchKlineData(tsCode: string, days = 120): Promise<KlineChart> {
-  const { data } = await api.get<KlineChart>(`/stock/analyze/${tsCode}/klines`, { params: { days } });
+export type KlinePeriod = 'daily' | 'weekly';
+
+export async function fetchKlineData(
+  tsCode: string,
+  days = 120,
+  period: KlinePeriod = 'daily'
+): Promise<KlineChart> {
+  const { data } = await api.get<KlineChart>(`/stock/analyze/${tsCode}/klines`, {
+    params: { days, period },
+  });
   return data;
 }
 

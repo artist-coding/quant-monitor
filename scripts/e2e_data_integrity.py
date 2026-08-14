@@ -171,17 +171,15 @@ with get_connection() as conn:
          k, d, j, dif, dea, macd_hist, bbi,
          ma5, ma10, ma20, ma60,
          rsi6, rsi12, rsi24, wr5, wr10,
-         boll_mid, boll_upper, boll_lower, boll_width, boll_position,
          vol_ratio, zg_white, dg_yellow,
          is_gold_cross, is_dead_cross,
          rsl_short, rsl_long, is_needle_20,
-         brick_value, brick_trend, brick_count, brick_trend_up, is_fanbao,
          is_beidou, is_suoliang, is_jiayin_zhenyang, is_jiayang_zhenyin, is_fangliang_yinxian,
          sell_score, sell_reason, signal, signal_desc,
          prev_high, prev_low, dmi_plus, dmi_minus, adx,
          net_lg_mf, net_elg_mf, last_b1_date, last_b1_price,
          last_yidong_date, market_pct_chg, market_dir, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
         (
             "000001.SZ",
@@ -208,11 +206,6 @@ with get_connection() as conn:
             55.0,
             -20.0,
             -25.0,
-            10.8,
-            11.5,
-            10.1,
-            1.4,
-            60.0,
             1.5,
             72.38,
             62.24,
@@ -221,11 +214,6 @@ with get_connection() as conn:
             65.0,
             62.0,
             1,
-            91.84,
-            "RED",
-            3,
-            1,
-            0,
             1,
             1,
             0,
@@ -283,12 +271,6 @@ if ic:
     # WR
     check("wr5", abs(ic["wr5"] - (-20.0)) < 0.01, f"实际: {ic['wr5']}")
     check("wr10", abs(ic["wr10"] - (-25.0)) < 0.01, f"实际: {ic['wr10']}")
-    # 布林带
-    check("boll_mid", abs(ic["boll_mid"] - 10.8) < 0.01, f"实际: {ic['boll_mid']}")
-    check("boll_upper", abs(ic["boll_upper"] - 11.5) < 0.01, f"实际: {ic['boll_upper']}")
-    check("boll_lower", abs(ic["boll_lower"] - 10.1) < 0.01, f"实际: {ic['boll_lower']}")
-    check("boll_width", abs(ic["boll_width"] - 1.4) < 0.01, f"实际: {ic['boll_width']}")
-    check("boll_position", abs(ic["boll_position"] - 60.0) < 0.01, f"实际: {ic['boll_position']}")
     # 量比
     check("vol_ratio", abs(ic["vol_ratio"] - 1.5) < 0.01, f"实际: {ic['vol_ratio']}")
     # 双线
@@ -300,12 +282,6 @@ if ic:
     check("rsl_short", abs(ic["rsl_short"] - 65.0) < 0.01, f"实际: {ic['rsl_short']}")
     check("rsl_long", abs(ic["rsl_long"] - 62.0) < 0.01, f"实际: {ic['rsl_long']}")
     check("is_needle_20", ic["is_needle_20"] == 1)
-    # 砖型图
-    check("brick_value", abs(ic["brick_value"] - 91.84) < 0.01, f"实际: {ic['brick_value']}")
-    check("brick_trend", ic["brick_trend"] == "RED", f"实际: {ic['brick_trend']}")
-    check("brick_count", ic["brick_count"] == 3)
-    check("brick_trend_up", ic["brick_trend_up"] == 1)
-    check("is_fanbao", ic["is_fanbao"] == 0)
     # 量价信号
     check("is_beidou", ic["is_beidou"] == 1)
     check("is_suoliang", ic["is_suoliang"] == 1)
@@ -579,11 +555,10 @@ with get_connection() as conn:
         """
         INSERT OR REPLACE INTO tushare_indicator_cache
         (ts_code, trade_date, close, macd_dif, macd_dea, macd,
-         kdj_k, kdj_d, kdj_j, rsi_6, rsi_12, rsi_24,
-         boll_upper, boll_mid, boll_lower, cci)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         kdj_k, kdj_d, kdj_j, rsi_6, rsi_12, rsi_24, cci)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
-        ("000001.SZ", "20250103", 11.0, 0.85, 0.62, 0.46, 72.5, 68.3, 80.9, 65.0, 60.0, 55.0, 11.5, 10.8, 10.1, 120.0),
+        ("000001.SZ", "20250103", 11.0, 0.85, 0.62, 0.46, 72.5, 68.3, 80.9, 65.0, 60.0, 55.0, 120.0),
     )
     cursor.execute("SELECT * FROM tushare_indicator_cache WHERE ts_code = '000001.SZ'")
     tic = cursor.fetchone()
@@ -593,7 +568,6 @@ if tic:
     check("macd_dif", abs(tic["macd_dif"] - 0.85) < 0.01, f"实际: {tic['macd_dif']}")
     check("kdj_k", abs(tic["kdj_k"] - 72.5) < 0.01, f"实际: {tic['kdj_k']}")
     check("rsi_6", abs(tic["rsi_6"] - 65.0) < 0.01, f"实际: {tic['rsi_6']}")
-    check("boll_mid", abs(tic["boll_mid"] - 10.8) < 0.01, f"实际: {tic['boll_mid']}")
     check("cci", abs(tic["cci"] - 120.0) < 0.01, f"实际: {tic['cci']}")
 else:
     FAIL += 1

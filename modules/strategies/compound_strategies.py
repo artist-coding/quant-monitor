@@ -168,11 +168,6 @@ def detect_nana(klines: list[DailyData], index: int, kirin_context: dict | None 
     confidence = 0.85
     mdc_details = []
 
-    today = klines[index]
-    if today.get("boll_lower") and today["close"] <= today["boll_lower"] * 1.05:
-        confidence += 0.10
-        mdc_details.append("回踩布林下轨支撑")
-
     if kirin_context and kirin_context.get("stage") in ("吸筹", "拉升"):
         confidence += 0.05
         mdc_details.append(f"处于主力{kirin_context['stage']}期")

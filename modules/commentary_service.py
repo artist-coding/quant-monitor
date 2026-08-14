@@ -147,12 +147,6 @@ def _load_knowledge_snippets(analysis: dict[str, Any]) -> str:
         if s:
             snippets.append(f"【B1 买点规则】\n{s[:600]}")
 
-    brick = indicators.get("brick", {})
-    if brick.get("trend") == "FANBAO" or brick.get("is_fanbao"):
-        s = _read_section("indicators.md", "砖形图")
-        if s:
-            snippets.append(f"【砖形图规则】\n{s[:600]}")
-
     # 始终注入信号字典中的解读提示
     s = _read_section("signal_dictionary.md", "KDJ")
     if s:
@@ -183,10 +177,8 @@ def _build_user_prompt(analysis: dict[str, Any]) -> str:
     kdj = indicators.get("kdj", {})
     macd = indicators.get("macd", {})
     ma = indicators.get("ma", {})
-    bollinger = indicators.get("bollinger", {})
     rsi = indicators.get("rsi", {})
     double_line = indicators.get("double_line", {})
-    brick = indicators.get("brick", {})
     dmi = indicators.get("dmi", {})
 
     # 构建指标快照
@@ -217,7 +209,6 @@ def _build_user_prompt(analysis: dict[str, Any]) -> str:
     lines.extend(
         [
             f"- 均线: MA5={ma.get('ma5', 0):.2f} MA20={ma.get('ma20', 0):.2f} MA60={ma.get('ma60', 0):.2f}",
-            f"- 布林带位置: {bollinger.get('position', 0):.1f}%",
             f"- RSI: RSI6={rsi.get('rsi6', 0):.2f} RSI12={rsi.get('rsi12', 0):.2f} RSI24={rsi.get('rsi24', 0):.2f}",
             f"- 量比: {indicators.get('vol_ratio', 0):.2f}",
             f"- 双线: 白线={double_line.get('white', 0):.2f} 黄线={double_line.get('yellow', 0):.2f}",
@@ -234,7 +225,6 @@ def _build_user_prompt(analysis: dict[str, Any]) -> str:
 
     lines.extend(
         [
-            f"- 砖形图: {brick.get('trend', 'N/A')} ({brick.get('count', 0)}块)",
             f"- DMI: +DI={dmi.get('plus', 0):.2f} -DI={dmi.get('minus', 0):.2f} ADX={dmi.get('adx', 0):.2f}",
             f"- 交易信号: {indicators.get('signal', 'N/A')}",
             "",
@@ -299,6 +289,13 @@ def _build_user_prompt(analysis: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _model_name() -> str:
+    """当前点评所用模型名，与 llm_providers 的默认值保持一致。"""
+    from modules.llm_providers import OpenAICompatProvider
+
+    return os.getenv("LLM_MODEL", OpenAICompatProvider.DEFAULT_MODEL)
+
+
 def _get_cache_key(analysis: dict[str, Any]) -> str:
     return f"{analysis.get('ts_code', '')}:{analysis.get('trade_date', '')}"
 
@@ -321,7 +318,7 @@ def generate_commentary(analysis: dict[str, Any]) -> dict[str, Any]:
                 "trade_date": analysis.get("trade_date", ""),
                 "commentary_text": text,
                 "generated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)),
-                "model_used": os.getenv("LLM_MODEL", "MiniMax-M3"),
+                "model_used": _model_name(),
                 "cached": True,
             }
 
@@ -336,13 +333,14 @@ def generate_commentary(analysis: dict[str, Any]) -> dict[str, Any]:
 
     # 调用 LLM
     ts_code = analysis.get("ts_code", "")
-    model_name = os.getenv("LLM_MODEL", "MiniMax-M3")
+    model_name = _model_name()
     start_ts = time.perf_counter()
     try:
-        from modules.llm_providers import MiniMaxProvider
+        from modules.llm_providers import OpenAICompatProvider
 
-        provider = MiniMaxProvider()
-        text = provider.generate(system_prompt, user_prompt, temperature=0.7)
+        provider = OpenAICompatProvider()
+        # 不写死 temperature：K3 只接受 1，具体取值交给 provider 按 .env 决定
+        text = provider.generate(system_prompt, user_prompt)
         elapsed_ms = (time.perf_counter() - start_ts) * 1000.0
 
         # 记录 LLM 响应耗时
@@ -422,6 +420,6 @@ def generate_commentary(analysis: dict[str, Any]) -> dict[str, Any]:
         "trade_date": analysis.get("trade_date", ""),
         "commentary_text": text,
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "model_used": os.getenv("LLM_MODEL", "MiniMax-M3"),
+        "model_used": _model_name(),
         "cached": False,
     }

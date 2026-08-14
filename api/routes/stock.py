@@ -22,10 +22,14 @@ def analyze_stock(ts_code: str, days: int = Query(default=120, ge=10, le=1000)):
 
 
 @router.get("/analyze/{ts_code}/klines", response_model=KlineChartResponse)
-def get_klines(ts_code: str, days: int = Query(default=120, ge=10, le=1000)):
-    """获取 K 线图表数据（ECharts 列式格式）"""
+def get_klines(
+    ts_code: str,
+    days: int = Query(default=120, ge=10, le=1000),
+    period: str = Query(default="daily", pattern="^(daily|weekly)$"),
+):
+    """获取 K 线图表数据（ECharts 列式格式）。period=weekly 返回周线。"""
     try:
-        return stock_service.get_kline_chart_data(ts_code, days)
+        return stock_service.get_kline_chart_data(ts_code, days, period)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取 K 线失败: {e}")
 

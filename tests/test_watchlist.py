@@ -217,7 +217,7 @@ class TestScanWatchlistAlerts:
         signals = [
             sig(StrategyType.WATCH, "WATCH", "20260717"),
             sig(StrategyType.XISHOU, "WATCH", "20260716"),
-            sig(StrategyType.BRICK_REDUCE, "SELL", "20260715"),
+            sig(StrategyType.PAIFA, "SELL", "20260715"),
             sig(StrategyType.WATCH, "WATCH", "20260714"),
             sig(StrategyType.S1, "SELL", "20260713"),
             sig(StrategyType.S3, "SELL", "20260710"),

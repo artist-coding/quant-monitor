@@ -19,16 +19,11 @@ def _get_indicator_funcs() -> SimpleNamespace:
             calculate_ma,
             calculate_rsi_multi,
             calculate_wr_multi,
-            calculate_bollinger,
             calculate_vol_ratio,
             calculate_zg_white,
             calculate_dg_yellow,
             detect_double_line_cross,
             detect_needle_20,
-            calculate_brick_value,
-            calculate_brick_history,
-            detect_brick_trend,
-            detect_fanbao,
             detect_volume_pattern,
             calculate_sell_score,
             detect_trade_signal,
@@ -43,16 +38,11 @@ def _get_indicator_funcs() -> SimpleNamespace:
             calculate_ma=calculate_ma,
             calculate_rsi_multi=calculate_rsi_multi,
             calculate_wr_multi=calculate_wr_multi,
-            calculate_bollinger=calculate_bollinger,
             calculate_vol_ratio=calculate_vol_ratio,
             calculate_zg_white=calculate_zg_white,
             calculate_dg_yellow=calculate_dg_yellow,
             detect_double_line_cross=detect_double_line_cross,
             detect_needle_20=detect_needle_20,
-            calculate_brick_value=calculate_brick_value,
-            calculate_brick_history=calculate_brick_history,
-            detect_brick_trend=detect_brick_trend,
-            detect_fanbao=detect_fanbao,
             detect_volume_pattern=detect_volume_pattern,
             calculate_sell_score=calculate_sell_score,
             detect_trade_signal=detect_trade_signal,
@@ -97,10 +87,6 @@ def _compute_day_indicators(
     rsi6, rsi12, rsi24 = f.calculate_rsi_multi(sub_klines) if n >= 25 else (50, 50, 50)
     wr5, wr10 = f.calculate_wr_multi(sub_klines) if n >= 10 else (-50, -50)
 
-    # 布林带
-    boll_vals = f.calculate_bollinger(sub_klines) if n >= 20 else (0, 0, 0, 0, 50)
-    boll_mid, boll_upper, boll_lower, boll_width, boll_pos = boll_vals
-
     # 量比
     vol_ratio = f.calculate_vol_ratio(sub_klines)
 
@@ -111,12 +97,6 @@ def _compute_day_indicators(
 
     # 单针下20
     rsl_short, rsl_long, is_needle = f.detect_needle_20(sub_klines) if n >= 22 else (50, 50, False)
-
-    # 砖型图
-    brick_value = f.calculate_brick_value(sub_klines) if n >= 8 else 0
-    brick_trend, brick_count = f.calculate_brick_history(sub_klines) if n >= 10 else ("NEUTRAL", 0)
-    brick_trend_up = f.detect_brick_trend(sub_klines) if n >= 115 else False
-    is_fanbao = f.detect_fanbao(sub_klines) if n >= 4 else False
 
     # 量价形态
     vol_pattern = f.detect_volume_pattern(today, yesterday) if yesterday else {}
@@ -171,12 +151,6 @@ def _compute_day_indicators(
         "rsi24": rsi24,
         "wr5": wr5,
         "wr10": wr10,
-        # 布林带
-        "boll_mid": boll_mid,
-        "boll_upper": boll_upper,
-        "boll_lower": boll_lower,
-        "boll_width": boll_width,
-        "boll_position": boll_pos,
         # 量比
         "vol_ratio": vol_ratio,
         # 双线
@@ -188,12 +162,6 @@ def _compute_day_indicators(
         "rsl_short": rsl_short,
         "rsl_long": rsl_long,
         "is_needle": is_needle,
-        # 砖型
-        "brick_value": brick_value,
-        "brick_trend": brick_trend,
-        "brick_count": brick_count,
-        "brick_trend_up": brick_trend_up,
-        "is_fanbao": is_fanbao,
         # 量价信号
         "is_beidou": is_beidou,
         "is_suoliang": is_suoliang,
@@ -220,11 +188,9 @@ _INDICATOR_INSERT_COLUMNS = (
     "k, d, j, dif, dea, macd_hist, bbi, "
     "ma5, ma10, ma20, ma60, "
     "rsi6, rsi12, rsi24, wr5, wr10, "
-    "boll_mid, boll_upper, boll_lower, boll_width, boll_position, "
     "vol_ratio, zg_white, dg_yellow, "
     "is_gold_cross, is_dead_cross, "
     "rsl_short, rsl_long, is_needle_20, "
-    "brick_value, brick_trend, brick_count, brick_trend_up, is_fanbao, "
     "is_beidou, is_suoliang, is_jiayin_zhenyang, is_jiayang_zhenyin, is_fangliang_yinxian, "
     "sell_score, sell_reason, signal, signal_desc, "
     "prev_high, prev_low, dmi_plus, dmi_minus, adx, "
@@ -264,11 +230,6 @@ def _build_indicator_row(ts_code: str, trade_date: str, ind: dict[str, Any]) -> 
         ind["rsi24"],
         ind["wr5"],
         ind["wr10"],
-        ind["boll_mid"],
-        ind["boll_upper"],
-        ind["boll_lower"],
-        ind["boll_width"],
-        ind["boll_position"],
         ind["vol_ratio"],
         ind["zg_white"],
         ind["dg_yellow"],
@@ -277,11 +238,6 @@ def _build_indicator_row(ts_code: str, trade_date: str, ind: dict[str, Any]) -> 
         ind["rsl_short"],
         ind["rsl_long"],
         int(ind["is_needle"]),
-        ind["brick_value"],
-        ind["brick_trend"],
-        ind["brick_count"],
-        int(ind["brick_trend_up"]),
-        int(ind["is_fanbao"]),
         int(ind["is_beidou"]),
         int(ind["is_suoliang"]),
         int(ind["is_jiayin_zhenyang"]),

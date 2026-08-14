@@ -31,12 +31,10 @@ export interface IndicatorDetail {
   };
   bbi: number;
   rsi: { rsi6: number; rsi12: number; rsi24: number };
-  bollinger: { mid: number; upper: number; lower: number; width: number; position: number };
   ma: { ma5: number; ma10: number; ma20: number; ma60: number; high_52w: number; high_52w_dist: number };
   wr: { wr5: number; wr10: number };
   vol_ratio: number;
   double_line: { white: number; yellow: number; is_gold_cross: boolean; is_dead_cross: boolean };
-  brick: { value: number; trend: string; count: number; trend_up: boolean; is_fanbao: boolean };
   dmi: { plus: number; minus: number; adx: number };
   signal: string;
   sell_score: number;
@@ -103,7 +101,6 @@ export interface KlineChart {
   signal_markers: SignalMarker[];
   kdj: { k: (number | null)[]; d: (number | null)[]; j: (number | null)[] };
   macd: { dif: (number | null)[]; dea: (number | null)[]; hist: (number | null)[] };
-  brick: { values: (number | null)[]; colors: (number | null)[] };
   waves_sequence?: string[];
   kirin_sequence?: string[];
   breathing_wave?: number[];
@@ -115,9 +112,6 @@ export interface ChartOverlays {
   ma20: (number | null)[];
   ma60: (number | null)[];
   bbi: (number | null)[];
-  boll_upper: (number | null)[];
-  boll_mid: (number | null)[];
-  boll_lower: (number | null)[];
   white_line: (number | null)[];
   yellow_line: (number | null)[];
 }
