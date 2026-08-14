@@ -5,9 +5,12 @@
 诊断维度：
 1. 当前状态扫描（BBI/白线/黄线、KDJ、MACD）
 2. 防卖飞评分（V1.4）
-3. 出货信号扫描（S1/S2）
+3. 出货信号扫描（S1/S2/S3，S3 含绿肥红瘦/阶梯放量下跌/顶部大风车）
 4. 战法匹配（B1/B2/B3/SB1 可买区间）
 5. 止损/止盈位提示
+
+卖出建议遵循逐步放飞阶梯（modules/sell_decision.py）：
++20% 落袋 1/3 → S1 卖 1/2 → S2 再卖 1/2 → S3 清仓。
 """
 
 from typing import Any, Optional
@@ -146,9 +149,17 @@ def diagnose_stock(ts_code: str, days: int = 100) -> DiagnosisReport:
     # 止损/止盈
     stop_loss, target = _calc_stop_target(indicators, buy_signals, exit_signals)
 
+    # 综合建议只认**新鲜**的出货信号（最近 5 根 K 线，与 watchlist 闸门同口径）。
+    # exit_signals 列表本身保留近期历史（带日期展示无害），但"现在卖一半"这种
+    # 祈使句不能建立在两个月前的 S1 上。
+    from .sell_decision import _recent_trade_dates
+
+    fresh_dates = _recent_trade_dates(ts_code)
+    fresh_exits = [s for s in exit_signals if not fresh_dates or s["date"] in fresh_dates]
+
     # 综合建议
     recommendation, risk_level = _make_recommendation(
-        indicators, sell_score, exit_signals, buy_signals, kirin, centipede, bull_rope, sandglass
+        indicators, sell_score, fresh_exits, buy_signals, kirin, centipede, bull_rope, sandglass
     )
 
     return DiagnosisReport(
@@ -302,15 +313,18 @@ def _make_recommendation(
     if centipede and centipede.get("is_centipede"):
         return f"蜈蚣图（{centipede['score']:.0f}分），呼吸紊乱，直接排除不碰", "CRITICAL"
 
-    # 最高优先级：S1/S2/S3 出货信号
+    # 最高优先级：S1/S2/S3 出货信号 → 逐步放飞阶梯（sell_decision.py）
+    # S3 已含绿肥红瘦/阶梯放量下跌/顶部大风车，为清仓级，最严重，最先判。
     if exit_signals:
-        first_exit = exit_signals[0]
-        if first_exit["strategy"] == "S1":
-            return "S1逃顶信号出现，建议减仓或清仓", "CRITICAL"
-        if first_exit["strategy"] == "S2":
-            return "S2顶背离确认，建议无条件减仓", "CRITICAL"
-        if first_exit["strategy"] == "S3":
-            return "S3最后逃生窗口，建议离场", "HIGH"
+        kinds = {e["strategy"] for e in exit_signals}
+        if "S3" in kinds:
+            return "S3清仓信号，逐步放飞：全部卖出", "CRITICAL"
+        if "S1" in kinds and "S2" in kinds:
+            return "S1+S2 同现，逐步放飞：先卖1/2再卖1/2，共卖出现有仓位3/4", "CRITICAL"
+        if "S2" in kinds:
+            return "S2顶背离确认，逐步放飞：再卖出现有仓位1/2", "CRITICAL"
+        if "S1" in kinds:
+            return "S1逃顶信号，逐步放飞：卖出现有仓位1/2", "CRITICAL"
 
     # MACD 一票否决
     if ind.macd_veto:
