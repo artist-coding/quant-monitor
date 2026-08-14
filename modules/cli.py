@@ -212,7 +212,6 @@ def cmd_analyze(args):
     print(f"  BBI:  {result.bbi:.2f}")
     print(f"  均线: MA5={result.ma5:.2f}  MA10={result.ma10:.2f}  MA20={result.ma20:.2f}")
     print(f"  RSI:  {result.rsi6:.2f}/{result.rsi12:.2f}/{result.rsi24:.2f}")
-    print(f"  砖型图: {result.brick_trend}({result.brick_count}块)  值={result.brick_value:.2f}")
 
     print("\n【主力阶段】")
     if wave_data:
@@ -428,21 +427,27 @@ def cmd_watchlist(args):
 
 
 def cmd_diagnose(args):
-    """持仓诊断"""
+    """持仓诊断（含逐步放飞阶梯）"""
+    from dataclasses import asdict
+
     from modules.portfolio_diagnosis import diagnose_stock, format_report
+    from modules.sell_decision import evaluate_today, format_sell_decision
 
     ts_code = args.ts_code
     diagnosis = diagnose_stock(ts_code, days=args.days)
+    # --cost 显式给成本价；不给则尝试从交易记录反推持仓均价
+    sell_plan = evaluate_today(ts_code, entry_price=getattr(args, "cost", None))
 
     # ── JSON 输出 ──
     if args.json:
-        from dataclasses import asdict
-
-        _json_output(asdict(diagnosis))
+        payload = asdict(diagnosis)
+        payload["sell_plan"] = asdict(sell_plan)
+        _json_output(payload)
         return
 
-    # ── 人类可读输出（保持原样） ──
+    # ── 人类可读输出 ──
     print(format_report(diagnosis))
+    print(format_sell_decision(sell_plan))
 
 
 def cmd_sync(args):
@@ -813,6 +818,140 @@ def cmd_amv(args):
         return
 
 
+def cmd_replay(args):
+    """买点框架历史回放回测"""
+    import csv as _csv
+    import logging
+
+    from modules import framework_backtest as fb
+
+    if not args.json:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+
+    conn = fb._connect()
+    cal = fb.load_calendar(conn, args.start, args.end or "99999999")
+    full_cal = [str(r[0]) for r in conn.execute("SELECT DISTINCT trade_date FROM daily_kline ORDER BY trade_date")]
+    cal_pos = {d: i for i, d in enumerate(full_cal)}
+    dates = [d for d in cal if cal_pos[d] + fb.HOLD_DAYS < len(full_cal)]
+    regimes = fb.load_regimes(conn, full_cal)
+    # gate=on 时只有多头区间的日子会出信号，快照也只需要算这些日子；
+    # gate=off 要跑全部决策日，快照就得铺满
+    need = dates if args.gate == "off" else [d for d in dates if regimes.get(d) == "多头区间"]
+
+    if not args.skip_precompute:
+        todo = fb.missing_theme_dates(conn, need, args.theme_lookback)
+        if todo:
+            print(f"预计算分组强度快照 {len(todo)} 天（缺了会导致第二阶段全员落选）...")
+            fb.precompute_theme_strength(todo, args.theme_lookback)
+    conn.close()
+
+    result = fb.run_backtest(
+        args.start,
+        args.end or full_cal[-1],
+        workers=args.workers,
+        gate=(args.gate == "on"),
+        top_n=args.top_n,
+        min_group_strength=args.min_strength,
+        max_per_group=args.max_per_group,
+        include_watch=args.include_watch,
+        theme_lookback=args.theme_lookback,
+        limit_codes=args.limit,
+    )
+
+    if args.csv:
+        with open(args.csv, "w", newline="", encoding="utf-8-sig") as fh:
+            w = _csv.writer(fh)
+            w.writerow(
+                [
+                    "决策日", "代码", "名称", "结论", "确认分", "入选名次", "分组", "组强度", "区间",
+                    "买入日", "买入价", "卖出日", "卖出价", "期间最低", "期间最高", "买不进",
+                    "止损先于最高点",
+                    "收益率_未截断", "收益率_路径止损", "收益率_只封底",
+                    "收益率_卖最高点", "收益率_卖最高点无止损",
+                ]
+            )
+            for t in result["trades"]:
+                w.writerow(
+                    [
+                        t.decision_date, t.ts_code, t.name, t.action, round(t.score, 2), t.pick_rank,
+                        t.group, t.group_strength, t.regime, t.entry_date, t.entry_price,
+                        t.exit_date, t.exit_price, t.lowest, t.highest, int(t.unbuyable),
+                        int(t.stopped_before_peak),
+                        round(t.ret_raw, 6), round(t.ret_stop, 6), round(t.ret_floor, 6),
+                        round(t.ret_peak, 6), round(t.ret_peak_nostop, 6),
+                    ]
+                )
+        print(f"逐笔明细已写入 {args.csv}（{len(result['trades'])} 行）\n")
+
+    if args.json:
+        _json_output(
+            {
+                "params": result["params"],
+                "universe": result["universe"],
+                "decision_dates": result["decision_dates"],
+                "picks": fb.summarize([t for t in result["trades"] if t.pick_rank], label="picks"),
+                "all_buys": fb.summarize([t for t in result["trades"] if t.action == "BUY"], label="all_buys"),
+            }
+        )
+    else:
+        print(fb.format_summary(result))
+
+
+def cmd_review(args):
+    """复盘案例库：人工录入 → 框架归因回放 → 前瞻收益结算"""
+    from modules import review_memory as rm
+
+    action = args.review_action
+    if action == "add":
+        case = rm.add_case(
+            args.ts_code,
+            args.date,
+            note=args.note,
+            tags=args.tags,
+            source=args.source,
+            theme_lookback=args.theme_lookback,
+            precompute_theme=not args.no_theme,
+        )
+        if args.json:
+            _json_output(case)
+            return
+        print(rm.format_case(case))
+        return
+
+    if action == "list":
+        cases = rm.list_cases(limit=args.limit, source=args.source, status=args.status)
+        if args.json:
+            _json_output(cases)
+            return
+        print(rm.format_case_list(cases))
+        return
+
+    if action == "show":
+        case = rm.get_case(args.id)
+        if case is None:
+            print(f"案例 #{args.id} 不存在")
+            sys.exit(1)
+        if args.json:
+            _json_output(case)
+            return
+        print(rm.format_case(case))
+        return
+
+    if action == "settle":
+        updated = rm.settle_open_cases()
+        if args.json:
+            _json_output(updated)
+            return
+        if not updated:
+            print("没有待结算的案例。")
+            return
+        print(f"补结算 {len(updated)} 个案例：")
+        for c in updated:
+            state = "已结清" if c["settled"] else "仍未满窗口"
+            print(f"  #{c['id']} {c['ts_code']} @{c['case_date']}  +30日 {rm._pct(c.get('ret_30'))}  {state}")
+        return
+
+
 def cmd_scan(args):
     """全市场扫描：大盘门槛 → 逐票 B1 买点确认 → 主线/行业筛选"""
     import logging
@@ -912,6 +1051,9 @@ def build_parser():
   zt amv status
   zt scan
   zt scan --top-n 3
+  zt review add 600487.SH 20260715 --note "缩量回踩20日线后放量长阳" --tags 缩量回踩
+  zt review list
+  zt review settle
         """,
     )
 
@@ -939,9 +1081,10 @@ def build_parser():
     subparsers.add_parser("workflow", help="每日五步工作流")
 
     # ── diagnose ──
-    p_diag = subparsers.add_parser("diagnose", help="持仓诊断")
+    p_diag = subparsers.add_parser("diagnose", help="持仓诊断（含逐步放飞阶梯）")
     p_diag.add_argument("ts_code", help="股票代码")
     p_diag.add_argument("--days", type=int, default=120, help="分析天数")
+    p_diag.add_argument("--cost", type=float, default=None, help="持仓成本价（不传则从交易记录反推均价）")
     p_diag.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── watchlist（add/remove/list/scan/report）──
@@ -1130,6 +1273,61 @@ def build_parser():
     p_scan.add_argument("--save-all", action="store_true", help="与 --save 连用：把 NONE 也一并落库")
     p_scan.add_argument("--json", action="store_true", help="JSON输出")
 
+    # ── replay（买点框架历史回放回测）──
+    p_replay = subparsers.add_parser("replay", help="买点框架历史回放：逐日重跑选股，看 30 个交易日后的涨跌")
+    p_replay.add_argument("--start", required=True, help="决策日区间起点 YYYYMMDD")
+    p_replay.add_argument("--end", help="决策日区间终点，默认到库内最新（自动扣掉结算不了的尾部）")
+    p_replay.add_argument("--workers", type=int, default=8, help="并行进程数（默认 8）")
+    p_replay.add_argument(
+        "--gate",
+        choices=["on", "off"],
+        default="on",
+        help="活跃市值总开关：on=只在多头区间选股（框架现状，默认）/ off=空头区间也跑一遍作对照（约 2.4 倍耗时）",
+    )
+    p_replay.add_argument("--top-n", type=int, default=5, help="最终选股数上限（默认 5，与 scan 一致）")
+    p_replay.add_argument("--min-strength", type=float, default=50.0, help="主线/行业强度门槛（默认 50）")
+    p_replay.add_argument("--max-per-group", type=int, default=None, help="每个主线/行业最多选几只（默认不限）")
+    p_replay.add_argument("--include-watch", action="store_true", help="把 WATCH 也纳入最终候选")
+    p_replay.add_argument("--theme-lookback", type=int, default=5, help="分组强度统计窗口（交易日，默认 5）")
+    p_replay.add_argument("--limit", type=int, default=0, help="只跑前 N 只票（调试用），0=全池")
+    p_replay.add_argument("--skip-precompute", action="store_true", help="跳过分组强度快照预计算（已算过时用）")
+    p_replay.add_argument("--csv", help="把逐笔明细导出到该 CSV 路径")
+    p_replay.add_argument("--json", action="store_true", help="JSON输出")
+
+    # ── review（复盘案例库：人工复盘记忆的案例层）──
+    p_rev = subparsers.add_parser(
+        "review", help="复盘案例库：录入值得复盘的买点，自动做框架归因回放与前瞻收益结算"
+    )
+    p_rev_sub = p_rev.add_subparsers(dest="review_action", required=True)
+
+    p_rev_add = p_rev_sub.add_parser("add", help="录入一个复盘案例（录入即归因：框架当时为什么没选/选了它）")
+    p_rev_add.add_argument("ts_code", help="股票代码，如 600487 或 600487.SH")
+    p_rev_add.add_argument("date", help="买点所在交易日 YYYYMMDD")
+    p_rev_add.add_argument("--note", default="", help="复盘记录：这个买点好在哪 / 框架错在哪")
+    p_rev_add.add_argument("--tags", default="", help="标签，逗号分隔（如 缩量回踩,放量长阳），供日后聚类")
+    p_rev_add.add_argument(
+        "--source",
+        choices=["manual", "missed", "failed"],
+        default="manual",
+        help="案例来源：manual=人工复盘（默认）/ missed=错过 / failed=失误",
+    )
+    p_rev_add.add_argument("--theme-lookback", type=int, default=None, help="主线强度统计窗口（默认与扫描一致）")
+    p_rev_add.add_argument("--no-theme", action="store_true", help="跳过分组强度快照补算（快，但主线归属会缺失）")
+    p_rev_add.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_rev_ls = p_rev_sub.add_parser("list", help="列出复盘案例")
+    p_rev_ls.add_argument("--limit", type=int, default=20, help="最多列出几条")
+    p_rev_ls.add_argument("--source", choices=["manual", "missed", "failed"], default=None, help="按来源过滤")
+    p_rev_ls.add_argument("--status", default=None, help="按状态过滤（open/lesson_linked/closed）")
+    p_rev_ls.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_rev_show = p_rev_sub.add_parser("show", help="查看单个案例的完整归因")
+    p_rev_show.add_argument("id", type=int, help="案例 ID")
+    p_rev_show.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_rev_settle = p_rev_sub.add_parser("settle", help="补算未满 30 个交易日的案例前瞻收益")
+    p_rev_settle.add_argument("--json", action="store_true", help="JSON输出")
+
     # ── monitor ──
     p_monitor = subparsers.add_parser("monitor", help="自选股主动预警与扫描推送")
     p_monitor.add_argument("--days", type=int, default=30, help="同步 K 线回溯天数")
@@ -1158,6 +1356,8 @@ def main():
         "theme": cmd_theme,
         "buy": cmd_buy,
         "scan": cmd_scan,
+        "replay": cmd_replay,
+        "review": cmd_review,
         "amv": cmd_amv,
         "backtest": cmd_backtest,
         "trade": cmd_trade,
