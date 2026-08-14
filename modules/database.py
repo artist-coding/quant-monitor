@@ -148,13 +148,7 @@ def init_tracking_tables(conn: sqlite3.Connection) -> None:
             macd_hist REAL,
             rsi_6 REAL,
             wr_6 REAL,
-            boll_upper REAL,
-            boll_mid REAL,
-            boll_lower REAL,
             vol_ratio REAL,
-            is_brick_red INTEGER DEFAULT 0,
-            is_brick_green INTEGER DEFAULT 0,
-            brick_count INTEGER DEFAULT 0,
             is_n_structure INTEGER DEFAULT 0,
             is_double_gun INTEGER DEFAULT 0,
             signal_type TEXT,
@@ -247,6 +241,49 @@ def init_tracking_tables(conn: sqlite3.Connection) -> None:
     """)
 
 
+def ensure_review_cases_table(conn: sqlite3.Connection) -> None:
+    """复盘案例库（人工复盘记忆的案例层），幂等建表。
+
+    独立成函数是因为它有两个调用方：``init_database`` 统一建表，
+    ``review_memory`` 在首次使用时自建——新加的表不该强迫老库先重跑 sync init。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS review_cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_code TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            case_date TEXT NOT NULL,          -- 用户指定的复盘日 YYYYMMDD
+            decision_date TEXT DEFAULT '',    -- 归因实际用的 K 线日（不晚于 case_date 的最近一根）
+            source TEXT DEFAULT 'manual',     -- manual=人工复盘 / missed=错过 / failed=失误
+            note TEXT DEFAULT '',             -- 人工复盘记录：这个买点好在哪 / 框架错在哪
+            tags TEXT DEFAULT '',             -- 逗号分隔，供日后按图形/原因聚类
+            -- 归因回放：录入时在案例时点重放 confirm_buy 的结论
+            regime TEXT DEFAULT '',           -- 当日活跃市值区间（缺失日沿用前一日）
+            gate_blocked INTEGER DEFAULT 0,   -- 总开关是否会拦下它（非多头区间=拦）
+            action TEXT DEFAULT '',           -- 忽略总开关后框架的结论 BUY/WATCH/NONE
+            score REAL DEFAULT 0,
+            stopped_at TEXT DEFAULT '',       -- excluded/veto/no_trigger/scored/no_data
+            decision_json TEXT DEFAULT '',    -- 完整 BuyDecision（含 breakdown/triggers/vetoes/detail）
+            -- 前瞻收益：次日开盘价买入口径，与 framework_backtest 一致
+            entry_date TEXT DEFAULT '',
+            entry_price REAL,
+            unbuyable INTEGER DEFAULT 0,      -- 次日停牌或一字涨停，名义上买不进
+            ret_5 REAL, ret_10 REAL, ret_20 REAL, ret_30 REAL,
+            ret_peak_30 REAL,                 -- 30 个交易日内最高价收益（卖点上界参考）
+            settled INTEGER DEFAULT 0,        -- 前瞻收益是否已算满全部窗口
+            status TEXT DEFAULT 'open',       -- open / lesson_linked / closed
+            lesson TEXT DEFAULT '',           -- 聚合出的教训引用（教训层回填，本层不写）
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ts_code, case_date)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_review_cases_date
+        ON review_cases(case_date DESC, source)
+    """)
+
+
 def _add_missing_columns(conn, table: str, columns: dict[str, str]) -> list[str]:
     """给已存在的表补齐缺失的列（幂等）。
 
@@ -270,6 +307,51 @@ def _add_missing_columns(conn, table: str, columns: dict[str, str]) -> list[str]
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
             added.append(name)
     return added
+
+
+def _drop_columns(conn, table: str, columns: tuple[str, ...]) -> list[str]:
+    """把已废弃的列从旧库里删掉（幂等）。
+
+    ``CREATE TABLE IF NOT EXISTS`` 对已存在的表是空操作，改了建表语句也不会
+    动到旧库——留着的死列会让 ``SELECT *`` 与按列序写入的代码继续看到它们。
+    这里按 PRAGMA table_info 做差集，只删真正还在的列，可以反复执行。
+
+    需要 SQLite 3.35+（ALTER TABLE DROP COLUMN）。更老的版本会抛
+    OperationalError，此时跳过：多余的列不影响读写，只是占空间。
+
+    Args:
+        table: 表名
+        columns: 要删掉的列名
+
+    Returns:
+        实际删掉的列名列表
+    """
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if not existing:  # 表不存在，没什么可删的
+        return []
+    dropped = []
+    for name in columns:
+        if name not in existing:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+            dropped.append(name)
+        except sqlite3.OperationalError:
+            break
+    return dropped
+
+
+# 布林带与砖形图已从系统中移除（不再作为任何战法的判据），旧库里的列一并删掉。
+# 注意：indicator_cache 上曾有 idx_ind_brick 索引引用 brick_trend/brick_count，
+# SQLite 不允许删掉被索引引用的列，init_database 里会先 DROP 该索引再走这里。
+_DROPPED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "indicator_cache": (
+        "boll_mid", "boll_upper", "boll_lower", "boll_width", "boll_position",
+        "brick_value", "brick_trend", "brick_count", "brick_trend_up", "is_fanbao",
+    ),
+    "tushare_indicator_cache": ("boll_upper", "boll_mid", "boll_lower"),
+    "tracking_records_self": ("boll_upper", "boll_mid", "boll_lower", "is_brick_red", "is_brick_green", "brick_count"),
+}
 
 
 def init_database(verbose: bool = True) -> None:
@@ -344,13 +426,6 @@ def init_database(verbose: bool = True) -> None:
                 wr5 REAL DEFAULT 0,
                 wr10 REAL DEFAULT 0,
 
-                -- 布林带
-                boll_mid REAL DEFAULT 0,
-                boll_upper REAL DEFAULT 0,
-                boll_lower REAL DEFAULT 0,
-                boll_width REAL DEFAULT 0,
-                boll_position REAL DEFAULT 0,
-
                 -- 量比
                 vol_ratio REAL DEFAULT 1.0,
 
@@ -364,13 +439,6 @@ def init_database(verbose: bool = True) -> None:
                 rsl_short REAL DEFAULT 0,
                 rsl_long REAL DEFAULT 0,
                 is_needle_20 INTEGER DEFAULT 0,
-
-                -- 砖型图
-                brick_value REAL DEFAULT 0,
-                brick_trend TEXT DEFAULT 'NEUTRAL',
-                brick_count INTEGER DEFAULT 0,
-                brick_trend_up INTEGER DEFAULT 0,
-                is_fanbao INTEGER DEFAULT 0,
 
                 -- 量价信号
                 is_beidou INTEGER DEFAULT 0,
@@ -424,10 +492,6 @@ def init_database(verbose: bool = True) -> None:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_ind_signal
             ON indicator_cache(signal)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_ind_brick
-            ON indicator_cache(brick_trend, brick_count)
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_ind_yidong
@@ -592,9 +656,6 @@ def init_database(verbose: bool = True) -> None:
                 rsi_6 REAL DEFAULT 0,
                 rsi_12 REAL DEFAULT 0,
                 rsi_24 REAL DEFAULT 0,
-                boll_upper REAL DEFAULT 0,
-                boll_mid REAL DEFAULT 0,
-                boll_lower REAL DEFAULT 0,
                 cci REAL DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (ts_code, trade_date)
@@ -793,8 +854,17 @@ def init_database(verbose: bool = True) -> None:
             ON amv_daily(regime, trade_date DESC)
         """)
 
-        # 19. 自我改进系统跟踪表（tracking_tables.sql）
+        # 19. 复盘案例库（人工复盘记忆的案例层，见 modules/review_memory.py）
+        ensure_review_cases_table(conn)
+
+        # 20. 自我改进系统跟踪表（tracking_tables.sql）
         init_tracking_tables(conn)
+
+        # 21. 废弃列清理（布林带、砖形图）
+        # idx_ind_brick 引用了 brick_trend/brick_count，必须先删索引才能删列
+        cursor.execute("DROP INDEX IF EXISTS idx_ind_brick")
+        for table, columns in _DROPPED_COLUMNS.items():
+            _drop_columns(conn, table, columns)
 
         if verbose:
             print(f"数据库初始化完成: {get_db_path()}")

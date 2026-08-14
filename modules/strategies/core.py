@@ -24,6 +24,99 @@ def _ensure_daily_klines(klines: list) -> list[DailyData]:
     return _dict_to_daily(klines)
 
 
+# ==================== K 线窗口连续性 ====================
+#
+# get_kline_data 取的是「最近 N 行」而不是「最近 N 个交易日」。库里但凡缺了几天，
+# 窗口就会静默地把远期 K 线缝到近期后面，而 KDJ/MACD/BBI 全是递推指标，
+# 一缝就整段失真且不报任何错。2026-08-07 那批选股就是这么错的：立讯精密的
+# 150 行窗口一路回溯到 2024-04，20250224 直接接 20260717，算出 J=5.76 触发 B1，
+# 数据补齐后真值是 15.10，根本不该触发。
+#
+# 这里提供「窗口 vs 全市场交易日历」的比对，让调用方能把「数据有洞」显式变成
+# 一条否决理由，而不是一个看起来很正常的买点。
+
+_MARKET_CALENDAR: list[str] | None = None
+
+# 最近 N 个交易日内的缺口才算数：KDJ 的 K/D 递推权重按 (2/3)^n 衰减，
+# 30 根之外的缺口对当日值的影响已不足万分之一，苛求全窗口无洞会误伤太多长停票。
+GAP_CHECK_BARS = 30
+# 这个窗口里缺到几天就判定「不可信」。1~2 天多是停牌核查，影响有限；
+# 5 天及以上要么是数据洞，要么是长期停牌复牌——两种情况下指标都不该采信。
+GAP_SEVERE_DAYS = 5
+
+
+def market_calendar(refresh: bool = False) -> list[str]:
+    """全市场交易日历（从 daily_kline 归纳，进程内缓存）。
+
+    没有独立的日历表可用：``trade_cal`` 只有 2019-2023，且中转 API 的
+    trade_cal 接口限流严重、拉空是常态。而 daily_kline 里「有任何一只票有行情」
+    的日子就是交易日，这个归纳在全市场覆盖完整的前提下与官方日历等价
+    （实测 2019-2023 段与 trade_cal 逐日吻合，0 差异）。
+    """
+    global _MARKET_CALENDAR
+    if _MARKET_CALENDAR is None or refresh:
+        conn = get_db_connection()
+        try:
+            _MARKET_CALENDAR = [
+                str(r[0]) for r in conn.execute("SELECT DISTINCT trade_date FROM daily_kline ORDER BY trade_date")
+            ]
+        finally:
+            conn.close()
+    return _MARKET_CALENDAR
+
+
+def window_gaps(klines: list, last_n: int = GAP_CHECK_BARS) -> dict[str, Any]:
+    """检查 K 线窗口末尾 ``last_n`` 根在交易日历上是否连续。
+
+    Args:
+        klines: 已按日期升序排列的 K 线（dict 或 DailyData 均可）
+        last_n: 只看末尾多少根
+
+    Returns:
+        ``{"missing": 缺失交易日数, "max_gap": 最大单个断裂, "span": 跨越的交易日数,
+           "bars": 实际根数, "worst": (前一根日期, 后一根日期, 中间缺几天) | None,
+           "severe": bool}``
+        取不到日历或数据不足时返回 ``missing=0`` 的空结论（不误报）。
+    """
+    empty = {"missing": 0, "max_gap": 0, "span": 0, "bars": 0, "worst": None, "severe": False}
+    if not klines:
+        return empty
+
+    def _date(k: Any) -> str:
+        return k["trade_date"] if isinstance(k, dict) else k.trade_date
+
+    window = klines[-last_n:] if last_n and len(klines) > last_n else klines
+    if len(window) < 2:
+        return empty
+
+    cal = market_calendar()
+    pos = {d: i for i, d in enumerate(cal)}
+    dates = [_date(k) for k in window]
+    if dates[0] not in pos or dates[-1] not in pos:
+        return empty
+
+    span = pos[dates[-1]] - pos[dates[0]] + 1
+    worst = None
+    max_gap = 0
+    for a, b in zip(dates, dates[1:]):
+        if a not in pos or b not in pos:
+            continue
+        gap = pos[b] - pos[a] - 1
+        if gap > max_gap:
+            max_gap = gap
+            worst = (a, b, gap)
+
+    missing = span - len(window)
+    return {
+        "missing": missing,
+        "max_gap": max_gap,
+        "span": span,
+        "bars": len(window),
+        "worst": worst,
+        "severe": missing >= GAP_SEVERE_DAYS,
+    }
+
+
 class StrategyType(Enum):
     """战法类型"""
 
@@ -60,11 +153,6 @@ class StrategyType(Enum):
 
     # 观察/提示
     WATCH = "观察"  # 阶段判断、提示信号
-
-    # 砖形图信号
-    BRICK_EXIT = "四块砖翻绿"  # 红砖翻绿 → 止损
-    BRICK_REDUCE = "四块砖减仓"  # 红砖满4块 → 减仓一半
-    BRICK_BOUNCE = "四块砖反弹"  # 绿砖满4块 → 可能止跌，观察B1
 
 
 class Priority(Enum):
@@ -116,14 +204,14 @@ def get_kline_data(ts_code: str, days: int = 120) -> list[dict]:
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # 联表查询：K线 + 指标缓存(Bollinger/RSI/DMI) + 资金流
+    # 联表查询：K线 + 指标缓存(RSI/DMI) + 资金流
     # 注意：先按 DESC 取最近 N 条，再在 Python 端反转回正序
     # （SQLite 在子查询里包一层即可避免 ORDER BY + LIMIT 顺序冲突）
     cursor.execute(
         """
         SELECT
             k.ts_code, k.trade_date, k.open, k.high, k.low, k.close, k.vol, k.amount, k.pct_chg,
-            i.boll_upper, i.boll_mid, i.boll_lower, i.rsi6, i.adx, i.dmi_plus, i.dmi_minus,
+            i.rsi6, i.adx, i.dmi_plus, i.dmi_minus,
             m.buy_lg_amount, m.buy_elg_amount, m.sell_lg_amount, m.sell_elg_amount, m.net_mf
         FROM (
             SELECT ts_code, trade_date, open, high, low, close, vol, amount, pct_chg
@@ -167,9 +255,6 @@ def get_kline_data(ts_code: str, days: int = 120) -> list[dict]:
                 "is_yinxian": row["close"] < prev_close,
                 "is_fangliang_yinxian": row["close"] < prev_close and row["vol"] > prev_vol * 1.5,
                 # MDC 扩展字段（LEFT JOIN 可能为 NULL，统一 fallback）
-                "boll_upper": row["boll_upper"] or 0,
-                "boll_mid": row["boll_mid"] or 0,
-                "boll_lower": row["boll_lower"] or 0,
                 "rsi6": row["rsi6"] or 0,
                 "adx": row["adx"] or 0,
                 "dmi_plus": row["dmi_plus"] or 0,
@@ -184,10 +269,10 @@ def get_kline_data(ts_code: str, days: int = 120) -> list[dict]:
 
 
 # MDC 多维验证字段分两类处理，语义不同：
-# - 指标类（布林/RSI/DMI）：0 是无意义的"假值"，必须还原为 None（无数据）
+# - 指标类（RSI/DMI）：0 是无意义的"假值"，必须还原为 None（无数据）
 # - 资金流类：下游存在裸算术（如 large_inflow - large_outflow），None 会直接 TypeError，
 #   故保持 0 语义（"无净流入/流出" 与 "无数据" 在下游行为一致）
-_MDC_INDICATOR_FIELDS = ("boll_upper", "boll_mid", "boll_lower", "rsi6", "adx", "dmi_plus", "dmi_minus")
+_MDC_INDICATOR_FIELDS = ("rsi6", "adx", "dmi_plus", "dmi_minus")
 _MDC_FLOW_FIELDS = ("net_mf", "large_inflow", "large_outflow")
 
 
@@ -195,9 +280,9 @@ def _mdc_num(value: Any) -> float | None:
     """MDC 指标字段归一化：None / 非数值 / 0 一律视为"无数据"，返回 None。
 
     get_kline_data 对 LEFT JOIN 出来的 NULL 做了 ``or 0`` 的 fallback，
-    但 ``boll_lower=0`` 这种"假价格"一旦被当作有效值参与
-    ``today.close <= boll_lower * 1.02`` 之类的比较就会得出完全错误的结论，
-    因此这里统一还原成 None，让下游的 ``if boll_lower and ...`` 真值判断跳过加分。
+    但 ``rsi6=0`` 这种"假读数"一旦被当作有效值参与 ``rsi6 < 25``（极端超卖）
+    之类的比较就会得出完全错误的结论——没数据的票会全员命中加分项，
+    因此这里统一还原成 None，让下游的 ``(rsi6 or 50) < 25`` 真值判断跳过加分。
     """
     if value is None:
         return None
@@ -243,7 +328,7 @@ def _dict_to_daily(klines: list[dict]) -> list[DailyData]:
             is_yinxian=k.get("is_yinxian", False),
             is_fangliang_yinxian=k.get("is_fangliang_yinxian", False),
         )
-        # MDC 多维验证字段（布林/RSI/ADX/DMI/资金流）。
+        # MDC 多维验证字段（RSI/ADX/DMI/资金流）。
         # 用 setattr 而非构造函数关键字参数，是为了兼容 DailyData 尚未声明这些字段的情况；
         # 待 indicators 层按契约补上声明后，本处行为完全不变。
         # 传进来的 dict 可能根本没有这些键（如测试 fixture 造的裸 K 线），故一律用 k.get 容错。

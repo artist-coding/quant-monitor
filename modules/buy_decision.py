@@ -34,11 +34,13 @@ B2/B3/SB1 与各路复合战法都不再作为触发条件——它们要么是 
 MDC 现算，不读 indicator_cache
 ------------------------------
 
-B1 的布林/RSI6/ADX/DMI 加分项原本依赖 ``indicator_cache`` 联表，而那张表
+B1 的 RSI6/ADX/DMI 加分项原本依赖 ``indicator_cache`` 联表，而那张表
 只覆盖票池 7 只票——全市场扫描时这些字段全是 None，加分项一条都不触发。
-现在改为从 K 线**现场计算**（``calculate_bollinger`` / ``calculate_rsi_multi`` /
-``calculate_dmi``），5000 只票一视同仁。资金流三项仍为 0：moneyflow 表是空的，
-没有替代数据源。
+现在改为从 K 线**现场计算**（``calculate_rsi_multi`` / ``calculate_dmi``），
+5000 只票一视同仁。
+
+布林带已从全仓库移除（用户不使用该指标），B1 原有的"触及布林下轨 +15%"
+与资金流的"主力大单净流入 +10%"（moneyflow 表是空的，恒不触发）一并删除。
 
 其他约束
 --------
@@ -76,7 +78,7 @@ logger = logging.getLogger(__name__)
 # "B1 出现后等一天确认"的常规节奏，又不至于把上周的旧信号当成今天的买点。
 FRESH_BARS = 3
 
-# 最少 K 线根数。B1 自身只要 10 根，但布林要 20、DMI 要 30——
+# 最少 K 线根数。B1 自身只要 10 根，但 RSI6 要 25、DMI 要 30——
 # 不够 30 根时 MDC 全缺，判出来的 B1 是裸 J 值，不如不判。
 _MIN_BARS = 30
 
@@ -259,9 +261,24 @@ def _collect_vetoes(klines: list, index: int) -> tuple[list[str], dict[str, Any]
     from .indicators import calculate_macd, detect_kirin_stage, detect_three_waves
     from .indicators.price_patterns.complex_patterns import detect_macd_signals
 
+    from .strategies.core import GAP_CHECK_BARS, window_gaps
+
     window = klines[: index + 1]
     vetoes: list[str] = []
     detail: dict[str, Any] = {}
+
+    # 数据连续性优先于一切指标：窗口在交易日历上有洞时，KDJ/MACD/BBI 这些递推指标
+    # 算出来的是把不相邻的 K 线缝在一起的产物，看着正常、其实全错。这种情况下
+    # 唯一正确的动作是拒判，而不是给一个「置信度 0.6 的 B1」。
+    gaps = window_gaps(window)
+    detail["data_gaps"] = gaps
+    if gaps["severe"]:
+        worst = gaps.get("worst")
+        where = f"，最大断口 {worst[0]}→{worst[1]} 缺 {worst[2]} 天" if worst else ""
+        vetoes.append(
+            f"K线不连续：最近 {GAP_CHECK_BARS} 个交易日里缺 {gaps['missing']} 天{where}"
+            "（数据缺失或长期停牌，递推指标不可信）"
+        )
 
     dif, dea, macd = calculate_macd(window)
     macd_sig: dict[str, Any] = {}
@@ -299,24 +316,41 @@ def _collect_vetoes(klines: list, index: int) -> tuple[list[str], dict[str, Any]
     return vetoes, detail
 
 
-def attach_mdc_fields(klines: list) -> None:
-    """就地给 K 线补上 B1 需要的 MDC 指标字段（布林 / RSI6 / DMI+ADX）。
+def attach_mdc_fields(klines: list, only_last: int | None = None) -> None:
+    """就地给 K 线补上 B1 需要的 MDC 指标字段（RSI6 / DMI+ADX）。
 
     B1 的多维验证原本靠 ``strategies.core.get_kline_data`` 联 ``indicator_cache``
     取这些值，而那张表只覆盖票池 7 只票——全市场扫描时字段全是 None，
-    "触及布林下轨 +15%""RSI 极端超卖 +5%""ADX 高位动能竭尽 +10%"
+    "RSI 极端超卖 +5%""ADX 高位动能竭尽 +10%"
     这些加分项一条都不会触发，B1 只剩裸的 J 值判断。
 
-    这里改为逐日现算。计算量是 O(n) 次调用 × n 根 K 线，150 根约 30ms，
+    这里改为逐日现算。计算量是 O(n) 次调用 × n 根 K 线，150 根约 26ms，
     比联表查询贵，但换来的是全市场一视同仁的判定口径。
 
-    资金流三项（net_mf/large_inflow/large_outflow）保持默认 0：
-    moneyflow 表是空的，且没有替代数据源，B1 的"主力大单净流入 +10%"
-    在全市场和票池里都同样不会触发。
-    """
-    from .indicators import calculate_bollinger, calculate_dmi, calculate_rsi_multi
+    Args:
+        only_last: 只给**最后 N 根** K 线算 MDC，其余留空。默认 None = 全算。
 
-    for i, k in enumerate(klines):
+            全算是浪费：这些字段的唯一读者是 ``detect_b1``，而它只读
+            ``klines[index]``，``_collect_triggers`` 又只在最后 ``FRESH_BARS``
+            根上试触发——150 根里只有 3 根的值会被读到。传 ``FRESH_BARS``
+            得到的判定结果与全算**逐位相同**（每根仍按 ``window[:i+1]``
+            的前缀计算，口径没变），只是省掉 147 根算了不看的。
+            默认保持全算是为了不改动既有调用方的行为；批量回放（回测）
+            必须传 ``FRESH_BARS``，否则 90% 的时间花在这里。
+
+            注意"最后 N 根"是相对**传入序列的末尾**而言的。判定下标不在
+            末尾时（停牌票回退取数），调用方必须先把序列截到判定下标，
+            否则算的是末尾 3 根、读的是下标附近 3 根，两边对不上——
+            ``confirm_buy`` 就是这么传的。
+
+    资金流三项（net_mf/large_inflow/large_outflow）已不参与 B1 打分，
+    moneyflow 表本来也是空的。
+    """
+    from .indicators import calculate_dmi, calculate_rsi_multi
+
+    start = 0 if only_last is None else max(0, len(klines) - only_last)
+    for i in range(start, len(klines)):
+        k = klines[i]
         window = klines[: i + 1]
         n = len(window)
         # 各指标的最小样本量与 data_sync.indicator_cache 保持一致，
@@ -324,13 +358,6 @@ def attach_mdc_fields(klines: list) -> None:
         if n >= 25:
             try:
                 k.rsi6 = calculate_rsi_multi(window)[0]
-            except Exception:
-                pass
-        if n >= 20:
-            try:
-                boll = calculate_bollinger(window)
-                if boll:
-                    k.boll_mid, k.boll_upper, k.boll_lower = boll[0], boll[1], boll[2]
             except Exception:
                 pass
         if n >= 30:
@@ -540,6 +567,8 @@ def confirm_buy(
     theme_lookback: int | None = None,
     market_gate: str = DEFAULT_MARKET_GATE,
     skip_market_gate: bool = False,
+    mdc_scope: int | None = None,
+    name: str | None = None,
 ) -> BuyDecision:
     """对单只票做买点确认。
 
@@ -553,6 +582,10 @@ def confirm_buy(
         theme_lookback: 主线强度的统计窗口；None 用 themes.DEFAULT_LOOKBACK
         market_gate: 大盘门槛，见 MARKET_GATE_* 常量
         skip_market_gate: 批量扫描时门槛已在外层统一判过，此处跳过重复判断
+        mdc_scope: 透传给 :func:`attach_mdc_fields` 的 ``only_last``。
+            传 ``FRESH_BARS`` 结果不变但快一个数量级，见该函数的说明。
+        name: 股票名称。调用方已知时传入，省掉一次建连接查 stock_basic——
+            历史回放要判几十万次，每次重查同一个静态字段是纯浪费。
     """
     from .strategies.core import _dict_to_daily, get_kline_data
 
@@ -563,7 +596,8 @@ def confirm_buy(
     # 票池里放了 ST 的话，用户该看到"被排除了"，而不是这只票凭空消失。
     from .universe import exclusion_reason
 
-    name = _lookup_name(ts_code)
+    if name is None:
+        name = _lookup_name(ts_code)
     excluded = exclusion_reason(ts_code, name if name else None)
     if excluded:
         decision.name = name
@@ -612,7 +646,7 @@ def confirm_buy(
         decision.trade_date = ""
         decision.detail["reason"] = f"{trade_date} 早于库内最早的 K 线（{klines[0].trade_date}），无数据可判"
         return decision
-    # B1 自身只要 10 根，但布林要 20、DMI 要 30、麒麟阶段更多。
+    # B1 自身只要 10 根，但 RSI6 要 25、DMI 要 30、麒麟阶段更多。
     # 统一要求 30 根，低于此的票 MDC 全缺，判出来的 B1 是裸 J 值，没有意义。
     if index < _MIN_BARS:
         decision.trade_date = klines[index].trade_date
@@ -624,9 +658,12 @@ def confirm_buy(
     decision.trade_date = klines[index].trade_date
     decision.name = name
 
-    # B1 的布林/RSI/DMI 加分项需要这些字段；indicator_cache 只覆盖票池，
+    # B1 的 RSI/DMI 加分项需要这些字段；indicator_cache 只覆盖票池，
     # 全市场扫描必须现算，否则 B1 退化成裸 J 值判断。
-    attach_mdc_fields(klines)
+    # 截到 index：判定只读这一根及之前，之后的 K 线算了也没人看；
+    # 且 mdc_scope 的"最后 N 根"必须相对 index 而不是数组末尾。
+    # 切片共享同一批对象，就地补值对原序列可见。
+    attach_mdc_fields(klines[: index + 1], mdc_scope)
 
     # ── 第二层：一票否决 ──
     vetoes, veto_detail = _collect_vetoes(klines, index)

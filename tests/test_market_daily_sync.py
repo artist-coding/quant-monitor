@@ -6,13 +6,27 @@ import pandas as pd
 
 from modules.cli import build_parser
 from modules.data_sync import DataSyncer
+from modules.data_sync import syncer as syncer_module
 from modules.database import get_connection
 
 
 class FakeMarketDataSource:
-    def __init__(self, *, is_open: int = 1, daily: pd.DataFrame | None = None):
+    def __init__(
+        self,
+        *,
+        is_open: int = 1,
+        daily: pd.DataFrame | None = None,
+        empty_before: int = 0,
+    ):
+        """
+        Args:
+            empty_before: 前 N 次 get_daily_by_trade_date 返回空 DataFrame，
+                之后才返回 ``daily``。用于模拟中转 API 限流时的静默空响应。
+                ``daily`` 为空时退化为「永远返回空」。
+        """
         self.is_open = is_open
         self.daily = daily if daily is not None else pd.DataFrame()
+        self.empty_before = empty_before
         self.market_calls = 0
 
     @property
@@ -32,6 +46,8 @@ class FakeMarketDataSource:
 
     def get_daily_by_trade_date(self, trade_date: str):
         self.market_calls += 1
+        if self.market_calls <= self.empty_before:
+            return pd.DataFrame()
         return self.daily.copy()
 
     def get_stock_basic(self, ts_code=None, name=None):
@@ -126,11 +142,28 @@ def test_market_daily_skips_non_trading_day(temp_db):
     assert source.market_calls == 0
 
 
-def test_market_daily_empty_response_is_failure(temp_db):
+def test_market_daily_empty_response_retries_then_fails(temp_db, monkeypatch):
+    """空结果必须重试后才判失败。
+
+    中转 API 被限流时不报错、直接返回空 DataFrame，与「非交易日」无法区分。
+    以前一次空就记 failed 并放过，整月被限流就等于整月静默漏数据——库里
+    2019-2026 的大段缺口正是这么来的。现在必须重试满 3 次才允许失败。
+    """
+    monkeypatch.setattr(syncer_module, "_EMPTY_RETRY_BACKOFFS", (0, 0, 0))
     source = FakeMarketDataSource(is_open=1, daily=pd.DataFrame())
     result = DataSyncer(datasource=source).sync_market_daily("20260115", refresh_stock_basic=False)
     assert result["status"] == "failed"
-    assert "日线为空" in result["message"]
+    assert "连续 3 次返回空" in result["message"]
+    assert source.market_calls == 3, f"应重试 3 次，实际 {source.market_calls} 次"
+
+
+def test_market_daily_empty_then_success_recovers(temp_db, monkeypatch):
+    """前两次返回空、第三次拿到数据时，应当正常入库而不是判失败。"""
+    monkeypatch.setattr(syncer_module, "_EMPTY_RETRY_BACKOFFS", (0, 0, 0))
+    source = FakeMarketDataSource(is_open=1, daily=_market_frame(), empty_before=2)
+    result = DataSyncer(datasource=source).sync_market_daily("20260115", refresh_stock_basic=False)
+    assert result["status"] == "success", result
+    assert result["market_rows"] > 0
 
 
 def test_market_daily_cli_parser():

@@ -23,10 +23,16 @@ from .fetcher import DataFetcher
 
 logger = logging.getLogger(__name__)
 
-# 涨跌停阈值（主板 10%，此处用 9.9% 容差）
-# 注意：创业板(300xxx)/科创板(688xxx) 实际为 20%，ST 为 5%，
-# 新股前 5 日无限制。当前简化处理，v2.11.0 计划按 market 字段动态调整。
-_LIMIT_THRESHOLD = 9.9
+# 涨跌停判定一律走 _daily_limit_threshold(ts_code)，按板块取阈值。
+# 原先这里另有一个全局常量 9.9%，被 sync_daily_kline 用于所有板块，与
+# sync_market_daily 的按板块口径打架：创业板/科创板涨 10~19.5% 的票被标成涨停，
+# 而 themes.limit_up_count 与 market_context 的涨停家数都读这个字段，主线强度
+# 因此被系统性抬高。已删除该常量，杜绝两套口径共存。
+# 仍未覆盖的特例：ST（±5%）与新股前 5 日（无限制），见 market_context 的说明。
+
+# 全市场日线返回空时的重试退避（秒）。空结果二义：非交易日 / 被限流静默返回空。
+# 退避总长要能跨过限流窗口；测试里 monkeypatch 成 (0, 0, 0)。
+_EMPTY_RETRY_BACKOFFS = (2, 8, 30)
 
 # 中转 API 配置（从环境变量读取）
 TUSHARE_API_URL = os.environ.get("TUSHARE_API_URL", "")
@@ -434,13 +440,34 @@ class DataSyncer:
             if refresh_stock_basic:
                 result["stock_basic_rows"] = self.sync_stock_basic()
 
-            df = self._call_api_with_retry(
-                "market_daily",
-                self._fetcher.fetch_market_daily,
-                target,
-            )
+            # 「返回空」是二义的：可能真是非交易日/盘后未入库，也可能只是被限流了——
+            # 中转 API 限流时**不报错，直接返回空 DataFrame**。而 _call_api_with_retry
+            # 只对抛异常的情况重试，空结果会被当成正常返回，于是这一天就永久漏掉了。
+            # 库里 2019-2026 那些整段缺口就是这么来的：批量回补跑得快 → 被限流 → 整月返回空
+            # → 每天记一条 failed 日志 → 没有任何东西回头补。
+            # 实测把速率降到 ~37 次/分后，同样这些日期全部能正常返回数据。
+            # 因此这里对空结果做递增退避重试，退避总时长足以跨过限流窗口。
+            df = None
+            for attempt, backoff in enumerate(_EMPTY_RETRY_BACKOFFS):
+                df = self._call_api_with_retry(
+                    "market_daily",
+                    self._fetcher.fetch_market_daily,
+                    target,
+                )
+                if df is not None and not df.empty:
+                    break
+                logger.warning(
+                    "%s 全市场日线返回空（第 %d/3 次），可能是限流而非非交易日，%d 秒后重试",
+                    target,
+                    attempt + 1,
+                    backoff,
+                )
+                time.sleep(backoff)
             if df is None or df.empty:
-                raise RuntimeError(f"{target} 全市场日线为空，可能尚未完成盘后入库")
+                raise RuntimeError(
+                    f"{target} 全市场日线连续 3 次返回空。若该日确为交易日，多半是接口限流——"
+                    f"降速后用 `zt sync market-daily {target}` 重跑"
+                )
 
             required = {"ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount", "pct_chg"}
             missing = sorted(required.difference(df.columns))
@@ -553,9 +580,13 @@ class DataSyncer:
                 return 0
 
             # 计算量比（需要历史数据，这里先跳过，由指标计算模块处理）
-            # 计算涨跌停标记
-            df["is_limit_up"] = df["pct_chg"].apply(lambda x: 1 if x >= _LIMIT_THRESHOLD else 0)
-            df["is_limit_down"] = df["pct_chg"].apply(lambda x: 1 if x <= -_LIMIT_THRESHOLD else 0)
+            # 计算涨跌停标记。必须与 sync_market_daily 用同一个按板块的阈值：
+            # 之前这里写死 9.9%，把创业板/科创板涨 10~19.5% 的票全标成了涨停，
+            # 而 themes.limit_up_count 和 market_context 的涨停家数都读这个字段，
+            # 结果是主线强度被系统性抬高。两条写入路径的口径必须唯一。
+            threshold = _daily_limit_threshold(ts_code)
+            df["is_limit_up"] = df["pct_chg"].apply(lambda x: 1 if x >= threshold else 0)
+            df["is_limit_down"] = df["pct_chg"].apply(lambda x: 1 if x <= -threshold else 0)
 
             with get_connection() as conn:
                 cursor = conn.cursor()
@@ -901,9 +932,6 @@ class DataSyncer:
                 "rsi_6": "rsi_6",
                 "rsi_12": "rsi_12",
                 "rsi_24": "rsi_24",
-                "boll_upper": "boll_upper",
-                "boll_mid": "boll_mid",
-                "boll_lower": "boll_lower",
                 "cci": "cci",
             }
 
@@ -919,9 +947,8 @@ class DataSyncer:
                     """
                     INSERT OR REPLACE INTO tushare_indicator_cache
                     (ts_code, trade_date, close, macd_dif, macd_dea, macd,
-                     kdj_k, kdj_d, kdj_j, rsi_6, rsi_12, rsi_24,
-                     boll_upper, boll_mid, boll_lower, cci)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     kdj_k, kdj_d, kdj_j, rsi_6, rsi_12, rsi_24, cci)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     records,
                 )

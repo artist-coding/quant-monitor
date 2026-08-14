@@ -773,19 +773,17 @@ def test_attach_mdc_fills_indicator_fields(temp_db):
     random.seed(7)
     kl = _make_klines(60)
     price = 10.0
-    for k in kl:  # 造点波动，否则布林带宽为 0、DMI 无定义
+    for k in kl:  # 造点波动，否则 RSI/DMI 无定义
         price *= 1 + random.uniform(-0.03, 0.03)
         k.open = k.close = round(price, 2)
         k.high = round(price * 1.02, 2)
         k.low = round(price * 0.98, 2)
 
-    assert kl[-1].boll_lower is None and kl[-1].adx is None
+    assert kl[-1].rsi6 is None and kl[-1].adx is None
 
     bd.attach_mdc_fields(kl)
 
     last = kl[-1]
-    assert last.boll_lower is not None and last.boll_upper is not None
-    assert last.boll_lower < last.boll_mid < last.boll_upper
     assert last.rsi6 is not None and 0 <= last.rsi6 <= 100
     assert last.adx is not None
 
@@ -794,7 +792,7 @@ def test_attach_mdc_is_safe_on_short_series(temp_db):
     """样本不足时保持 None，不能填 0——0 会被 B1 当成"有数据"参与比较。"""
     kl = _make_klines(15)
     bd.attach_mdc_fields(kl)
-    assert kl[-1].boll_lower is None
+    assert kl[-1].rsi6 is None
     assert kl[-1].adx is None
 
 
