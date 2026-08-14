@@ -43,17 +43,19 @@ TUSHARE_VERIFY_TOKEN_URL=
 
 ```ini
 LLM_API_KEY=你的API密钥
-LLM_BASE_URL=https://api.minimaxi.com/v1/chat/completions
-LLM_MODEL=MiniMax-M3
+LLM_BASE_URL=https://api.kimi.com/coding/v1/chat/completions
+LLM_MODEL=k3
+LLM_TEMPERATURE=1
 ```
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
 | `LLM_API_KEY` | **否** | 未配置时，系统只做意图识别+知识库检索，不生成回答 |
 | `LLM_BASE_URL` | 否（有 Key 时填） | OpenAI 兼容格式的 API 地址 |
-| `LLM_MODEL` | 否（有 Key 时填） | 模型名称，默认 `MiniMax-M3` |
+| `LLM_MODEL` | 否（有 Key 时填） | 模型名称，默认 `k3`（Kimi K3） |
+| `LLM_TEMPERATURE` | 否 | 采样温度，默认 `1`。K3 是强制推理模型，**只接受 1**，传其他值接口会报 `invalid temperature` |
 
-**支持的 LLM 提供商**：目前支持 OpenAI 兼容格式的 API（MiniMax、OpenRouter、通义千问等）。
+**支持的 LLM 提供商**：任何 OpenAI 兼容 `/chat/completions` 的 API（Kimi、OpenRouter、通义千问等），换供应商只改上面三个变量，代码不用动。
 
 ---
 
@@ -118,9 +120,10 @@ TUSHARE_API_URL=https://tt.xiaodefa.cn
 DATA_MODE=jnb
 TUSHARE_TOKEN=ba0930...fa15
 TUSHARE_API_URL=https://tt.xiaodefa.cn
-LLM_API_KEY=sk-cp-...ULLC
-LLM_BASE_URL=https://api.minimaxi.com/v1/chat/completions
-LLM_MODEL=MiniMax-M3
+LLM_API_KEY=sk-kimi-...jLL
+LLM_BASE_URL=https://api.kimi.com/coding/v1/chat/completions
+LLM_MODEL=k3
+LLM_TEMPERATURE=1
 KB_ENABLED=true
 KB_API_URL=http://localhost:8000
 ```
