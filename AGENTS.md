@@ -289,13 +289,15 @@ zettaranc-skill/
 │   ├── package.json
 │   └── vite.config.ts
 ├── knowledge/                  # 29 篇交易体系知识文档
-├── tests/                      # pytest 测试（52 个文件，892 passed / 11 skipped）
+├── tests/                      # pytest 测试（40 个文件，909 passed / 10 skipped）
 ├── scripts/                    # 薄壳工具脚本（业务逻辑在 modules/）
 │   ├── _common.py
 │   ├── sync_watchlist.py
 │   ├── sync_and_compute.py
 │   ├── batch_compute_indicators.py
 │   ├── generate_report.py
+│   ├── data_audit.py
+│   ├── backup_data.sh          数据备份→私有仓库 Release
 │   └── e2e_data_integrity.py
 ├── corpus/                     # 语料采集与质检工具
 │   ├── quality_check.py        # SKILL.md 12 项质量检查
