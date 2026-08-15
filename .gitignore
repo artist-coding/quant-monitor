@@ -63,6 +63,10 @@ CLAUDE.md.bak
 .omc/
 .omo/
 .kimi/
+# kimi-code 的项目内目录：会话、凭证等运行时产物一律不入库，
+# 只放行入库的技能定义。主仓库是 public，写错这条等于把凭证推上去。
+.kimi-code/*
+!.kimi-code/skills/
 
 # 对话实录（临时文件，不入库）
 对话实录*.md
