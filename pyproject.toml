@@ -39,6 +39,17 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
+# zt-web 这个 entry point 一直缺声明：装完 pip install -e . 直接跑必然 ImportError
+web = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "pydantic-settings>=2.0.0",
+]
+# 高阶行情数据层（modules/advanced_data.py），不装也不影响主流程：
+# 取不到数时返回 None 并在 last_error 里提示 pip install akshare
+advanced = [
+    "akshare>=1.18.0",
+]
 
 [project.scripts]
 zt = "modules.cli:main"
