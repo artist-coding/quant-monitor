@@ -1,0 +1,22 @@
+[Unit]
+Description=Quant Monitor frontend (vite preview, port 4173)
+After=quant-monitor-api.service
+Wants=quant-monitor-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/zx/quant-monitor/frontend
+Environment=HOME=/home/zx
+Environment=NODE_ENV=production
+# 跑的是 dist/ 里的生产构建。改完前端代码必须重新 npm run build,
+# 光 restart 这个服务不会重新编译。
+ExecStart=/usr/bin/node /home/zx/quant-monitor/frontend/node_modules/vite/bin/vite.js preview --port 4173
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target
