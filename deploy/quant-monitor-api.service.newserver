@@ -1,0 +1,30 @@
+[Unit]
+Description=Quant Monitor FastAPI backend (port 8010; 8000 已被本机其他用户占用)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zx
+WorkingDirectory=/home/zx/quant-monitor
+Environment=HOME=/home/zx
+Environment=PYTHONUNBUFFERED=1
+Environment=KIMI_RESEARCH_TIMEOUT=3600
+Environment=KIMI_RESEARCH_IDLE_TIMEOUT=600
+Environment=KIMI_RESEARCH_SYNTHESIS_TIMEOUT=900
+# kimi-code CLI 未迁移(316M 二进制,新机需重装)。装好后取消注释并改成实际路径:
+# Environment=KIMI_CLI_PATH=/home/zx/.kimi-code/bin/kimi
+#
+# 注意:这里刻意不用 EnvironmentFile=- 的写法。带 - 时配置文件缺失会被静默忽略,
+# 服务照常 running 但 TUSHARE_TOKEN / LLM_API_KEY 全空,同步与 LLM 静默失效。
+EnvironmentFile=/home/zx/quant-monitor/.env
+ExecStart=/usr/bin/python3 -m uvicorn api.main:app --host 127.0.0.1 --port 8010
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
