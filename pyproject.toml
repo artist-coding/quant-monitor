@@ -68,6 +68,15 @@ addopts = "-v --tb=short"
 markers = [
     "slow: 慢速端到端测试，默认不在常规 CI 中跑",
 ]
+# 只把 modules.advanced_data 自己触发的 FutureWarning 升成错误（第四段是模块名正则，
+# 匹配的是发出告警那一帧的 __name__）。这不是为了消噪音：read_json 的
+# `to_datetime(..., unit=...)` 那句 FutureWarning 一旦在别处被 -W error 升成异常，就会被
+# _cache_get 的兜底 except 吞成"缓存没命中"，于是每次 fetch 都去打上游、缓存全程失效。
+# 缺了这一条，把 _decode_payload 的 convert_axes 改回 True 全库照样绿（实测）。
+# **只针对本模块**：全仓库还有别的库在发 FutureWarning，一刀切会炸掉不相干的测试。
+filterwarnings = [
+    "error::FutureWarning:modules.advanced_data",
+]
 
 [tool.ruff]
 line-length = 120

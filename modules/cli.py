@@ -612,7 +612,9 @@ def cmd_theme(args):
         print(f"{'主线':<18} {'状态':<6} {'成员':>5}  说明")
         print("-" * 76)
         for r in rows:
-            print(f"{r['name']:<18} {'启用' if r['active'] else '停用':<6} {r['member_count']:>5}  {r['description'][:40]}")
+            print(
+                f"{r['name']:<18} {'启用' if r['active'] else '停用':<6} {r['member_count']:>5}  {r['description'][:40]}"
+            )
         return
 
     if action == "members":
@@ -792,10 +794,7 @@ def cmd_amv(args):
         days = amv.recent(args.limit, end_date=args.date)
         if args.json:
             _json_output(
-                [
-                    {"trade_date": d.trade_date, "close": d.close, "pct_chg": d.pct_chg, "regime": d.regime}
-                    for d in days
-                ]
+                [{"trade_date": d.trade_date, "close": d.close, "pct_chg": d.pct_chg, "regime": d.regime} for d in days]
             )
             return
         print(f"{'日期':<10} {'收盘':>14} {'涨幅':>10}  区间")
@@ -863,22 +862,55 @@ def cmd_replay(args):
             w = _csv.writer(fh)
             w.writerow(
                 [
-                    "决策日", "代码", "名称", "结论", "确认分", "入选名次", "分组", "组强度", "区间",
-                    "买入日", "买入价", "卖出日", "卖出价", "期间最低", "期间最高", "买不进",
+                    "决策日",
+                    "代码",
+                    "名称",
+                    "结论",
+                    "确认分",
+                    "入选名次",
+                    "分组",
+                    "组强度",
+                    "区间",
+                    "买入日",
+                    "买入价",
+                    "卖出日",
+                    "卖出价",
+                    "期间最低",
+                    "期间最高",
+                    "买不进",
                     "止损先于最高点",
-                    "收益率_未截断", "收益率_路径止损", "收益率_只封底",
-                    "收益率_卖最高点", "收益率_卖最高点无止损",
+                    "收益率_未截断",
+                    "收益率_路径止损",
+                    "收益率_只封底",
+                    "收益率_卖最高点",
+                    "收益率_卖最高点无止损",
                 ]
             )
             for t in result["trades"]:
                 w.writerow(
                     [
-                        t.decision_date, t.ts_code, t.name, t.action, round(t.score, 2), t.pick_rank,
-                        t.group, t.group_strength, t.regime, t.entry_date, t.entry_price,
-                        t.exit_date, t.exit_price, t.lowest, t.highest, int(t.unbuyable),
+                        t.decision_date,
+                        t.ts_code,
+                        t.name,
+                        t.action,
+                        round(t.score, 2),
+                        t.pick_rank,
+                        t.group,
+                        t.group_strength,
+                        t.regime,
+                        t.entry_date,
+                        t.entry_price,
+                        t.exit_date,
+                        t.exit_price,
+                        t.lowest,
+                        t.highest,
+                        int(t.unbuyable),
                         int(t.stopped_before_peak),
-                        round(t.ret_raw, 6), round(t.ret_stop, 6), round(t.ret_floor, 6),
-                        round(t.ret_peak, 6), round(t.ret_peak_nostop, 6),
+                        round(t.ret_raw, 6),
+                        round(t.ret_stop, 6),
+                        round(t.ret_floor, 6),
+                        round(t.ret_peak, 6),
+                        round(t.ret_peak_nostop, 6),
                     ]
                 )
         print(f"逐笔明细已写入 {args.csv}（{len(result['trades'])} 行）\n")
@@ -1018,6 +1050,221 @@ def cmd_scan(args):
         raise SystemExit(0)
 
 
+def cmd_advanced(args):
+    """高阶行情数据层：目录 / 取数 / 自检（东财 / 同花顺 / 财联社公开接口）"""
+    # 延迟 import：照 cmd_amv 的惯例，命令处理函数用到的模块都在函数体内 import。
+    # （原注释说这能省下 pandas 的启动开销——实测不成立：import modules.cli 时 pandas
+    #   已经被拉进来了。真正值得省的是 akshare 那 2 秒，那句已在 advanced_data.fetch 里注明。）
+    from modules import advanced_data as adv
+
+    action = args.advanced_action
+
+    def _fmt_ttl(seconds: int) -> str:
+        """TTL 秒数转人话——目录里摆一个 43200，没人一眼认得出那是 12 小时。"""
+        if seconds >= 86400 and seconds % 86400 == 0:
+            return f"{seconds // 86400}天"
+        if seconds >= 3600 and seconds % 3600 == 0:
+            return f"{seconds // 3600}小时"
+        if seconds >= 60 and seconds % 60 == 0:
+            return f"{seconds // 60}分钟"
+        return f"{seconds}秒"
+
+    def _wrap(text: str, indent: str, width: int = 44) -> list[str]:
+        """按中文折行。textwrap 按字符数算宽度，中文占两格，所以 width 取终端宽度的一半。"""
+        import textwrap
+
+        return [indent + line for line in textwrap.wrap(text, width=width)]
+
+    if action == "catalog":
+        grouped = adv.catalog()
+        if args.category:
+            if args.category not in grouped:
+                print(f"! 未知分组: {args.category}")
+                print("  可用分组: " + " / ".join(grouped))
+                raise SystemExit(1)
+            grouped = {args.category: grouped[args.category]}
+
+        # 目录是给人翻的，`zt advanced catalog | head -30` 是最常见的用法，而 Python 默认
+        # 忽略 SIGPIPE：head 一关管子，后面的 print 就抛 BrokenPipeError，退出时再吐一句
+        # "Exception ignored"，看着像出了故障。这里恢复成 Unix 默认（管子关了就安静退出）。
+        # 放在 --json **之前**：`catalog --json | head` 一样会被截断，只覆盖文本那一支等于漏一半。
+        # **只在 catalog 这一支**做——它整支都纯本地、不碰网络；get 那边要写网络 socket，
+        # 把 SIGPIPE 放回 SIG_DFL 会让本该抛 BrokenPipeError 的写操作直接杀掉进程，
+        # 违反"fetch 只返回 None、不炸"的契约。
+        import signal
+        import threading
+
+        # signal.signal() 在非主线程直接抛 ValueError（"signal only works in main thread"）。
+        # api/ 下有线程池，谁把 cmd_advanced 接进去，catalog 就会栽在这句纯装饰性的信号复位上；
+        # 而在子线程里本来也没有"复位进程信号处置"这回事，跳过即可。
+        if hasattr(signal, "SIGPIPE") and threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
+        if args.json:
+            _json_output(grouped)
+            return
+
+        total = sum(len(v) for v in grouped.values())
+        print(f"高阶行情数据层：{total} 条接口 / {len(grouped)} 个分组")
+        print("key 是对外稳定名，上游改函数名只动 func —— 调用方一律只认 key。")
+        for category, items in grouped.items():
+            print()
+            print(f"━━ {category}（{len(items)} 条）" + "━" * 26)
+            for it in items:
+                print(f"  {it['key']:<18} TTL {_fmt_ttl(it['ttl']):<6} 源 {it['source']:<4} {it['func']}")
+                for line in _wrap(it["desc"], "     "):
+                    print(line)
+                if it["params"]:
+                    for name, note in it["params"].items():
+                        # 参数说明和 desc 一样要折行：注册表里有的条目会把"参数取值的代价"
+                        # 写进说明（jgdy 那条讲的是页数随日期指数增长），一行摆不下，
+                        # 不折行就直接跑出终端右边，等于没写
+                        head, *rest = _wrap(f"参数 {name}: {note}", "     ")
+                        print(head)
+                        for line in rest:
+                            print("       " + line.lstrip())
+                else:
+                    print("     参数 无（无参接口）")
+        return
+
+    if action == "get":
+        params: dict[str, str] = {}
+        for item in args.param or []:
+            # 只切第一个 =：参数值本身可能带 =（如 symbol=A=B），切多了会把值截断
+            if "=" not in item:
+                print(f"! --param 要写成 k=v，收到的是: {item!r}")
+                raise SystemExit(2)
+            name, value = item.split("=", 1)
+            name = name.strip()
+            if not name:
+                print(f"! --param 的参数名是空的: {item!r}")
+                raise SystemExit(2)
+            params[name] = value
+
+        source = adv.get_advanced_source()
+        df = source.fetch(args.key, params, force=args.force)
+        warnings = source.warnings
+
+        if df is None:
+            # last_error 的文案本来就是照着"一眼看出该去改哪"写的（未知 key 会列出全部可用 key、
+            # 参数名打错会列出接受的参数名），原样打出来，别自己再包一层把线索盖掉
+            error = source.last_error or "未知错误"
+            if args.json:
+                _json_output(
+                    {
+                        "key": args.key,
+                        "params": params,
+                        "ok": False,
+                        "error": error,
+                        "warnings": warnings,
+                        "rows": 0,
+                        "data": [],
+                    }
+                )
+            else:
+                print(f"! 取数失败: {args.key}")
+                print(f"  {error}")
+                for w in warnings:
+                    print(f"  ! {w}")
+            raise SystemExit(1)
+
+        # ths_industry_index 是 31 条里**唯一**把行标识放在行索引里的（DatetimeIndex(name='日期')），
+        # 而下面两条渲染路径都会把 index 整个丢掉：文本走 to_string(index=False)，
+        # --json 走 orient="records"。日期一丢，输出只剩"收盘/成交量"两列，
+        # 这几行到底是哪几天完全看不出来。所以渲染前先把非默认行索引还原成普通列——
+        # 放在这里而不是各自的分支里，是为了让文本、--json 的 columns、data 三处口径一致。
+        import pandas as pd
+
+        # "行标识在不在 index 里"**不能**拿 isinstance(df.index, pd.RangeIndex) 判：
+        # 走缓存回来的普通行号是 Index([0,1,...], dtype=int64) 而不是 RangeIndex
+        # （split json 里存的就是一串整数，读回来只能是普通 Index）。判成"有行标识"的话，
+        # 那 30 条本来就是 RangeIndex 的接口在**命中缓存时**会凭空 reset 出一列叫 index 的行号：
+        # 同一条 `zt advanced get zt_pool`，冷缓存打 2 列、热缓存打 3 列，
+        # --json 的每条记录还多一个 index 键——下游按列名取数会直接错位。
+        # 所以问的是语义而不是类型：index 有没有名字（ths_industry_index 的是 name='日期'），
+        # 或者它压根就不是 0..n-1 那串行号。
+        index_carries_labels = any(name is not None for name in df.index.names) or not df.index.equals(
+            pd.RangeIndex(len(df))
+        )
+        if index_carries_labels:
+            try:
+                df = df.reset_index()
+            except ValueError:
+                # index 名和现有列名撞了（reset_index 会抛 ValueError）。少显示一列日期，
+                # 也好过让整条命令炸在渲染上——数据本身照常打出来。
+                pass
+
+        shown = df if args.limit <= 0 else df.head(args.limit)
+
+        if args.json:
+            try:
+                records = json.loads(shown.to_json(orient="records", force_ascii=False, date_format="iso"))
+            except (ValueError, TypeError, OverflowError):
+                # 上游偶尔塞进 to_json 认不得的对象；宁可退化成字符串，也不能让 --json 整个炸掉
+                records = shown.astype(str).to_dict(orient="records")
+            _json_output(
+                {
+                    "key": args.key,
+                    "params": params,
+                    "ok": True,
+                    "rows": int(len(df)),
+                    "shown": int(len(shown)),
+                    "columns": [str(c) for c in df.columns],
+                    "warnings": warnings,
+                    "data": records,
+                }
+            )
+            return
+
+        tail = f"（只显示前 {len(shown)} 行）" if len(shown) < len(df) else ""
+        print(f"{args.key}  {len(df)} 行 × {len(df.columns)} 列{tail}")
+        # 空表和缺列都不是错误，但调用方必须知道这次不完整——warnings 一条都不能吞
+        for w in warnings:
+            print(f"  ! {w}")
+        if df.empty:
+            print("（空表）")
+            return
+        print(shown.to_string(index=False))
+        return
+
+    if action == "selfcheck":
+        result = adv.selfcheck(probe=not args.no_probe)
+        if args.json:
+            _json_output(result)
+            return
+
+        print(f"akshare 版本: {result['akshare 版本']}")
+        print(f"接口总数: {result['接口总数']}")
+
+        gone = result["函数已不存在"]
+        if gone:
+            print(f"! 函数已不存在 {len(gone)} 条（akshare 改过名，请更新 INTERFACES 的 func 字段）:")
+            for g in gone:
+                print(f"    {g['key']:<18} {g['func']}")
+        else:
+            print("函数名: 全部对得上。")
+
+        if args.no_probe:
+            print("（--no-probe：只做离线 hasattr 检查，没发任何网络请求）")
+            return
+
+        skipped = result["跳过_需要参数"]
+        print(f"跳过（需要参数，随手编的参数取回空表说明不了问题）: {len(skipped)} 条")
+
+        passed = result["探活通过"]
+        print(f"探活通过: {len(passed)} 条")
+        for p in passed:
+            note = ("  告警: " + "; ".join(p["告警"])) if p.get("告警") else ""
+            print(f"    {p['key']:<18} {p['行数']} 行  {p['列']}{note}")
+
+        failed = result["探活失败"]
+        if failed:
+            print(f"! 探活失败: {len(failed)} 条")
+            for f in failed:
+                print(f"    {f['key']:<18} {f['错误']}")
+        return
+
+
 def build_parser():
     """构建并返回 zt CLI 的 ArgumentParser（支持独立导入测试）"""
     parser = argparse.ArgumentParser(
@@ -1049,6 +1296,8 @@ def build_parser():
   zt buy 601360.SH --detail
   zt amv add 20260810 --close 215000
   zt amv status
+  zt advanced catalog
+  zt advanced get zt_pool --param date=20260814 --limit 5
   zt scan
   zt scan --top-n 3
   zt review add 600487.SH 20260715 --note "缩量回踩20日线后放量长阳" --tags 缩量回踩
@@ -1193,7 +1442,9 @@ def build_parser():
         "import",
         help="导入外部判定器（kimi code + swarm）产出的股票↔主线归属 JSON",
     )
-    p_theme_imp.add_argument("file", help='JSON 文件：[{"theme":"...","ts_code":"...","confidence":0.9,"reason":"..."}]')
+    p_theme_imp.add_argument(
+        "file", help='JSON 文件：[{"theme":"...","ts_code":"...","confidence":0.9,"reason":"..."}]'
+    )
     p_theme_imp.add_argument("--source", default="kimi-swarm", help="判定来源标记，默认 kimi-swarm")
     p_theme_imp.add_argument("--replace", action="store_true", help="先清空涉及主线的旧成员再导入（整体重跑时用）")
     p_theme_imp.add_argument("--json", action="store_true", help="JSON输出")
@@ -1213,9 +1464,7 @@ def build_parser():
     p_buy.add_argument("--save", action="store_true", help="结果落库 buy_decisions")
     p_buy.add_argument("--theme-lookback", type=int, default=5, help="主线强度统计窗口（交易日，默认 5）")
     p_buy.add_argument("--top-n", type=int, default=5, help="第二阶段最终选股数上限（默认 5）")
-    p_buy.add_argument(
-        "--min-strength", type=float, default=50.0, help="第二阶段主线/行业强度门槛（默认 50=中位行业）"
-    )
+    p_buy.add_argument("--min-strength", type=float, default=50.0, help="第二阶段主线/行业强度门槛（默认 50=中位行业）")
     p_buy.add_argument(
         "--max-per-group", type=int, default=None, help="第二阶段每个主线/行业最多选几只（默认不限，允许集中）"
     )
@@ -1252,6 +1501,30 @@ def build_parser():
 
     p_amv_v = p_amv_sub.add_parser("verify", help="重算区间与文件标注逐日比对")
     p_amv_v.add_argument("--json", action="store_true", help="JSON输出")
+
+    # ── advanced（高阶行情数据层：东财/同花顺/财联社公开接口）──
+    p_adv = subparsers.add_parser("advanced", help="高阶行情数据：资金面/情绪面/结构面/风险面/消息面/技术榜")
+    p_adv_sub = p_adv.add_subparsers(dest="advanced_action", required=True)
+
+    p_adv_cat = p_adv_sub.add_parser("catalog", help="列出全部接口（按分组），纯本地不联网")
+    p_adv_cat.add_argument("--category", help="只看一个分组：资金面/情绪面/结构面/风险面/消息面/技术榜")
+    p_adv_cat.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_adv_get = p_adv_sub.add_parser("get", help="取一条接口的数据（未命中缓存时会联网）")
+    p_adv_get.add_argument("key", help="接口 key（见 zt advanced catalog），如 zt_pool")
+    p_adv_get.add_argument(
+        "--param",
+        action="append",
+        metavar="K=V",
+        help="接口参数，可重复，如 --param date=20260814",
+    )
+    p_adv_get.add_argument("--limit", type=int, default=20, help="最多显示几行（0=全部），默认 20")
+    p_adv_get.add_argument("--force", action="store_true", help="跳过缓存强制重取")
+    p_adv_get.add_argument("--json", action="store_true", help="JSON输出")
+
+    p_adv_sc = p_adv_sub.add_parser("selfcheck", help="体检：函数还在不在、无参接口还能不能取到数据")
+    p_adv_sc.add_argument("--no-probe", action="store_true", help="只做离线检查，不发任何网络请求")
+    p_adv_sc.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── scan（全市场扫描）──
     p_scan = subparsers.add_parser("scan", help="全市场扫描：大盘门槛 → B1 买点确认 → 主线/行业筛选")
@@ -1295,9 +1568,7 @@ def build_parser():
     p_replay.add_argument("--json", action="store_true", help="JSON输出")
 
     # ── review（复盘案例库：人工复盘记忆的案例层）──
-    p_rev = subparsers.add_parser(
-        "review", help="复盘案例库：录入值得复盘的买点，自动做框架归因回放与前瞻收益结算"
-    )
+    p_rev = subparsers.add_parser("review", help="复盘案例库：录入值得复盘的买点，自动做框架归因回放与前瞻收益结算")
     p_rev_sub = p_rev.add_subparsers(dest="review_action", required=True)
 
     p_rev_add = p_rev_sub.add_parser("add", help="录入一个复盘案例（录入即归因：框架当时为什么没选/选了它）")
@@ -1359,6 +1630,7 @@ def main():
         "replay": cmd_replay,
         "review": cmd_review,
         "amv": cmd_amv,
+        "advanced": cmd_advanced,
         "backtest": cmd_backtest,
         "trade": cmd_trade,
         "daily": cmd_daily,
