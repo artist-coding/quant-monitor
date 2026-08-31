@@ -1,0 +1,32 @@
+[Unit]
+Description=Quant Monitor 全市场日线同步（收盘后，含缺口补齐）
+Documentation=file:///home/zx/quant-monitor/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# oneshot：跑完就退出，由 quant-monitor-sync.timer 触发。
+# 注意 Type=oneshot 不接受 Restart=（systemd 会拒绝加载整个单元），
+# 重试靠两条路：脚本内部单日 3 次退避重试 + timer 的第二个触发点兜底。
+Type=oneshot
+WorkingDirectory=/home/zx/quant-monitor
+Environment=HOME=/home/zx
+Environment=PYTHONUNBUFFERED=1
+
+# 本机 socks5 代理会打断 Tushare 通路，且报错指向错误方向（表现为连接超时，
+# 看着像对端挂了）。systemd --user 会继承 import-environment 进来的代理变量，
+# 所以这里显式清掉。脚本里还有一层兜底，两处都留着。
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+
+# 刻意不用 EnvironmentFile=- 的写法。带 - 时配置文件缺失会被静默忽略，
+# 服务照常 success 但 TUSHARE_TOKEN 全空，同步静默失效。
+EnvironmentFile=/home/zx/quant-monitor/.env
+
+ExecStart=/usr/bin/python3 /home/zx/quant-monitor/scripts/sync_daily_kline.py
+
+# 全市场 5000+ 只股票，单日退避重试拉满约 10 分钟；给到 30 分钟避免误杀。
+TimeoutStartSec=1800
+UMask=0077
+
+[Install]
+WantedBy=default.target

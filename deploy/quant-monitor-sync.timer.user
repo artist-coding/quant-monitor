@@ -1,0 +1,20 @@
+[Unit]
+Description=每交易日收盘后触发全市场日线同步
+Documentation=file:///home/zx/quant-monitor/deploy/README.md
+
+[Timer]
+# 周一到周五 20:00 主跑（北京时间；本机时区 Asia/Shanghai，OnCalendar 走本地时间）。
+# A 股 15:00 收盘，Tushare 全市场 daily 通常 15:30~16:00 出全，20:00 早已出全。
+OnCalendar=Mon..Fri 20:00
+# 22:00 兜底跑一次。20:00 那次成功的话，脚本查出没有待补交易日、秒退，
+# 不产生任何接口调用；失败或数据出得晚的话这次接上。
+OnCalendar=Mon..Fri 22:00
+# 节假日不在这里排除——脚本查本地交易日历，非交易日 sync_market_daily 直接 skipped。
+#
+# 关机/休眠错过的触发点，开机后补跑一次。配合脚本的缺口补齐，长期关机也能追上。
+Persistent=true
+AccuracySec=1min
+Unit=quant-monitor-sync.service
+
+[Install]
+WantedBy=timers.target
