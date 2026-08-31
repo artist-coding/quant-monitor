@@ -752,8 +752,16 @@ def cmd_amv(args):
     action = args.amv_action
 
     if action == "import":
-        res = amv.import_history(args.file)
-        print(f"导入 {res['imported']} 行，区间 {res['start']} ~ {res['end']}")
+        res = amv.import_history(args.file, dry_run=args.dry_run)
+        head = "【dry-run，未落库】" if res["dry_run"] else "导入"
+        print(f"{head} {res['imported']} 行（跳过 {res['skipped']} 行无收盘价），区间 {res['start']} ~ {res['end']}")
+        # 表头一并打出来：换了导出格式时，列名对不上是最常见的坏法，
+        # 而它表现成"导入 0 行"或"只导进来一部分"，光看行数看不出原因。
+        print(f"表头: {', '.join(res['columns'])}")
+        if res["dry_run"]:
+            for row in res["preview"]:
+                print(f"  样例 {row['trade_date']}  收盘={row['close']}  标注={row['regime_imported'] or '-'}")
+            return
         v = amv.verify_against_imported()
         if v["total"]:
             print(f"与文件自带标注比对: {v['matched']}/{v['total']}  吻合 {v['accuracy']}%")
@@ -1481,8 +1489,9 @@ def build_parser():
     p_amv = subparsers.add_parser("amv", help="活跃市值多空区间：选股的总开关")
     p_amv_sub = p_amv.add_subparsers(dest="amv_action", required=True)
 
-    p_amv_imp = p_amv_sub.add_parser("import", help="导入历史（0AMV-YYMMDD-增强.csv）")
-    p_amv_imp.add_argument("file", help="CSV 路径")
+    p_amv_imp = p_amv_sub.add_parser("import", help="导入活跃市值表（csv / xlsx / zip）")
+    p_amv_imp.add_argument("file", help="文件路径，csv / xlsx / zip 都认；整表 upsert，重复导入幂等")
+    p_amv_imp.add_argument("--dry-run", action="store_true", help="只解析不落库，换了导出格式时先核对列名映射")
 
     p_amv_add = p_amv_sub.add_parser("add", help="录入单日活跃市值（收盘后）")
     p_amv_add.add_argument("date", help="交易日 YYYYMMDD 或 YYYY-MM-DD")

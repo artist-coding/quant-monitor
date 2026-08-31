@@ -27,10 +27,12 @@
 数据来源
 --------
 
-- 历史：``zt amv import <csv>``，导入"0AMV-YYMMDD-增强.csv"。
-- 每日：收盘后由用户提供，``zt amv add <日期> --close <收盘价>``。
-  也接受 ``--pct``，但**精度不足**——落在 -2.3% 边界附近时结论可能相反，
-  所以能给收盘价就给收盘价。
+- 每日（当前主路径）：``scripts/sync_amv.py`` 从百度网盘分享链接拉当天的表
+  再整表导入，由 systemd timer ``quant-monitor-amv.timer`` 触发。
+- 历史/手工：``zt amv import <文件>``，csv / xlsx / zip 都认。整表 upsert，
+  重复导入同一份文件是幂等的。
+- 兜底：``zt amv add <日期> --close <收盘价>``。也接受 ``--pct``，但**精度不足**
+  ——落在 -2.3% 边界附近时结论可能相反，所以能给收盘价就给收盘价。
 """
 
 from __future__ import annotations
@@ -38,7 +40,11 @@ from __future__ import annotations
 import csv
 import logging
 import re
+import shutil
+import tempfile
+import zipfile
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -156,49 +162,246 @@ def recompute_regimes() -> int:
     return len(dates)
 
 
+# ==================== 表格解析 ====================
+#
+# 活跃市值的原始表由用户从行情终端导出后放百度网盘，格式不受我们控制：
+# 见过 CSV，也可能是 xlsx，或者一个装着若干 CSV 的 zip（.gitignore 里
+# 那条「【批量下载】*.zip」就是这么来的）。与其每换一次导出方式改一次代码，
+# 不如在这里一次把三种容器和常见列名都认下来。
+
+# 列名别名。同一列在不同导出器里叫法不同，全部认下来。
+_DATE_KEYS = ("date", "trade_date", "日期", "交易日期", "时间")
+_OPEN_KEYS = ("open", "开盘", "开盘价")
+_HIGH_KEYS = ("high", "最高", "最高价")
+_LOW_KEYS = ("low", "最低", "最低价")
+_CLOSE_KEYS = ("close", "收盘", "收盘价", "最新", "最新价")
+_VOLUME_KEYS = ("volume", "vol", "成交量")
+_AMOUNT_KEYS = ("amount", "成交额", "成交金额")
+_REGIME_KEYS = ("区间", "regime", "多空区间")
+
+# zip 里认哪些后缀当表格。其余（说明文件、图片）跳过。
+_TABLE_SUFFIXES = (".csv", ".txt", ".xlsx", ".xlsm")
+
+
+def _norm_key(key: Any) -> str:
+    """表头去空白、去 BOM。"""
+    return str(key if key is not None else "").strip().lstrip("﻿")
+
+
+def _pick(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """按别名顺序取第一个非空值。"""
+    for k in keys:
+        v = row.get(k)
+        if v is not None and str(v).strip() != "":
+            return v
+    return None
+
+
+def _to_float(value: Any) -> float | None:
+    """单元格转 float；空值、非数字一律 None（不抛异常）。"""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(",", "").rstrip("%")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _cell_to_date(value: Any) -> str:
+    """单元格转 YYYYMMDD。
+
+    Excel 的日期列 openpyxl 会还原成 datetime 对象，``str()`` 出来是
+    ``2026-08-25 00:00:00``，交给 _norm_date 会数出 14 位数字然后报
+    「无法解析日期」——错误信息指向格式非法，实际是类型没转。
+    """
+    if isinstance(value, (datetime, date)):  # datetime 是 date 的子类，一起接住
+        return value.strftime("%Y%m%d")
+    return _norm_date(value)
+
+
+def _decode(raw: bytes) -> str:
+    """CSV 解码：先 UTF-8 再 GBK。
+
+    行情终端导出的 CSV 有相当比例是 GBK。原来固定 ``utf-8-sig`` +
+    ``errors="replace"`` 解，GBK 文件**不会报错**，而是整行表头变成乱码，
+    于是一列都匹配不上，最后抛「没有解析出任何有效行情行」——
+    错误信息指向文件是空的，实际是编码猜错了。
+    """
+    for enc in ("utf-8-sig", "gbk"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8-sig", errors="replace")
+
+
+def _read_csv(path: Path) -> list[dict[str, Any]]:
+    return [
+        {_norm_key(k): v for k, v in row.items()} for row in csv.DictReader(_decode(path.read_bytes()).splitlines())
+    ]
+
+
+def _read_excel(path: Path) -> list[dict[str, Any]]:
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:  # pragma: no cover - 依赖缺失时才走到
+        raise RuntimeError(f"读 {path.suffix} 需要 openpyxl：pip install openpyxl") from exc
+
+    # data_only=True 取公式的缓存值；否则带公式的单元格读出来是 "=A1*2" 这种字符串。
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        ws = wb[wb.sheetnames[0]]
+        rows = ws.iter_rows(values_only=True)
+        header = next(rows, None)
+        if header is None:
+            return []
+        keys = [_norm_key(h) for h in header]
+        out = []
+        for values in rows:
+            if all(v is None or str(v).strip() == "" for v in values):
+                continue  # 表尾的空行
+            out.append(dict(zip(keys, values)))
+        return out
+    finally:
+        wb.close()
+
+
+def _read_zip(path: Path) -> list[dict[str, Any]]:
+    """解开压缩包，把里面所有表格按文件名排序后依次读出来。
+
+    Windows/网盘打的包，成员文件名多半是 GBK 且没置 UTF-8 标志位，
+    zipfile 会按 cp437 解成乱码。乱码名不影响解压内容，但会让
+    「挑出 .csv」这步失灵——包里明明有表格，却报「没有表格文件」。
+    """
+    rows: list[dict[str, Any]] = []
+    with zipfile.ZipFile(path) as zf:
+        members = []
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename
+            if not info.flag_bits & 0x800:  # 0x800 = 文件名是 UTF-8
+                try:
+                    name = name.encode("cp437").decode("gbk")
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    pass
+            if Path(name).suffix.lower() in _TABLE_SUFFIXES:
+                members.append((name, info))
+
+        if not members:
+            raise ValueError(f"{path} 里没有 {'/'.join(_TABLE_SUFFIXES)} 表格文件")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, info in sorted(members):
+                dest = Path(tmp) / Path(name).name
+                with zf.open(info) as src, dest.open("wb") as out:
+                    shutil.copyfileobj(src, out)
+                rows.extend(_read_table(dest))
+    return rows
+
+
+def _read_table(path: Path) -> list[dict[str, Any]]:
+    """按后缀分派到具体读法。zip 会递归回到这里。"""
+    suffix = path.suffix.lower()
+    if suffix == ".zip":
+        return _read_zip(path)
+    if suffix in (".xlsx", ".xlsm"):
+        return _read_excel(path)
+    if suffix == ".xls":
+        # openpyxl 只认 OOXML，老式 BIFF 的 .xls 读出来是 InvalidFileException，
+        # 报错文本是英文的 "openpyxl does not support the old .xls format"，
+        # 不给出路会让人以为是文件坏了。
+        raise ValueError(
+            f"{path} 是老式 .xls（BIFF）格式，openpyxl 读不了。先转一道：soffice --headless --convert-to xlsx '{path}'"
+        )
+    return _read_csv(path)
+
+
 # ==================== 导入与录入 ====================
 
 
-def import_history(csv_path: str | Path) -> dict[str, Any]:
-    """导入「0AMV-YYMMDD-增强.csv」历史数据。
+def import_history(source: str | Path, *, dry_run: bool = False) -> dict[str, Any]:
+    """导入活跃市值表格（csv / xlsx / zip 都认）。
 
     保留原始的「区间」列到 regime_imported，供回归测试比对；
     实际生效的 regime 由 recompute_regimes 按规则重算。
+
+    整表 upsert，所以重复导入同一份文件是幂等的；每日下载的全量表
+    直接喂进来即可，不需要先切出增量。
+
+    Args:
+        source: 文件路径，后缀决定读法
+        dry_run: 只解析不落库，用来在换了导出格式后先核对一遍列名映射
+
+    Returns:
+        imported/skipped/start/end/columns/preview，dry_run 时 imported 是「将要写入」的行数
     """
-    path = Path(csv_path)
+    path = Path(source)
     if not path.exists():
         raise FileNotFoundError(f"找不到文件: {path}")
 
-    text = path.read_bytes().decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(text.splitlines())
+    raw_rows = _read_table(path)
+    columns = sorted({k for row in raw_rows for k in row if k})
 
     records = []
-    for row in reader:
-        raw_date = row.get("date") or row.get("日期") or ""
-        if not raw_date.strip():
+    skipped = 0
+    for row in raw_rows:
+        raw_date = _pick(row, _DATE_KEYS)
+        close = _to_float(_pick(row, _CLOSE_KEYS))
+        if raw_date is None or close is None or close <= 0:
+            # 补录用的占位行（只有日期没有收盘价）走这里，属于正常跳过。
+            skipped += 1
             continue
         try:
-            trade_date = _norm_date(raw_date)
-            close = float(row.get("close") or row.get("收盘") or 0)
-        except (ValueError, TypeError):
-            continue
-        if close <= 0:
+            trade_date = _cell_to_date(raw_date)
+        except ValueError:
+            skipped += 1
             continue
         records.append(
             (
                 trade_date,
-                float(row.get("open") or 0) or None,
-                float(row.get("high") or 0) or None,
-                float(row.get("low") or 0) or None,
+                _to_float(_pick(row, _OPEN_KEYS)),
+                _to_float(_pick(row, _HIGH_KEYS)),
+                _to_float(_pick(row, _LOW_KEYS)),
                 close,
-                float(row.get("volume") or 0) or None,
-                float(row.get("amount") or 0) or None,
-                (row.get("区间") or "").strip(),
+                _to_float(_pick(row, _VOLUME_KEYS)),
+                _to_float(_pick(row, _AMOUNT_KEYS)),
+                str(_pick(row, _REGIME_KEYS) or "").strip(),
             )
         )
 
     if not records:
-        raise ValueError(f"{path} 中没有解析出任何有效行情行")
+        # 一行都没解析出来，最常见的两个原因是列名对不上和编码猜错，
+        # 光说"没有有效行"会让人去查文件是不是空的，所以把表头一并打出来。
+        raise ValueError(
+            f"{path} 中没有解析出任何有效行情行（读到 {len(raw_rows)} 行，"
+            f"表头 {columns or '空'}）。日期列需叫 {'/'.join(_DATE_KEYS)} 之一，"
+            f"收盘列需叫 {'/'.join(_CLOSE_KEYS)} 之一"
+        )
+
+    # zip 里多份文件拼起来时顺序不一定按日期，start/end 和 upsert 都依赖有序。
+    # sort 是稳定的，同一天出现多次时仍保留文件先后，后写的覆盖先写的。
+    records.sort(key=lambda r: r[0])
+
+    result = {
+        "imported": len(records),
+        "skipped": skipped,
+        "start": records[0][0],
+        "end": records[-1][0],
+        "source": str(path),
+        "columns": columns,
+        "dry_run": dry_run,
+        "preview": [{"trade_date": r[0], "close": r[4], "regime_imported": r[7]} for r in (records[:3] + records[-3:])],
+    }
+    if dry_run:
+        return result
 
     with get_connection() as conn:
         conn.executemany(
@@ -207,20 +410,23 @@ def import_history(csv_path: str | Path) -> dict[str, Any]:
               (trade_date, open, high, low, close, volume, amount, regime_imported)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(trade_date) DO UPDATE SET
-                open = excluded.open, high = excluded.high, low = excluded.low,
-                close = excluded.close, volume = excluded.volume, amount = excluded.amount,
-                regime_imported = excluded.regime_imported
+                open = COALESCE(excluded.open, amv_daily.open),
+                high = COALESCE(excluded.high, amv_daily.high),
+                low = COALESCE(excluded.low, amv_daily.low),
+                close = excluded.close,
+                volume = COALESCE(excluded.volume, amv_daily.volume),
+                amount = COALESCE(excluded.amount, amv_daily.amount),
+                -- 空值不覆盖旧值。每天下的那份表只有 OHLCV，没有「区间」列，
+                -- 直接 excluded.regime_imported 会把历史「增强」表导进来的
+                -- 8180 行官方标注一次性清空——那是校验区间规则的唯一地面真值，
+                -- 清掉之后 zt amv verify 永远返回 0/0，而且没有任何报错。
+                regime_imported = COALESCE(NULLIF(excluded.regime_imported, ''), amv_daily.regime_imported)
             """,
             records,
         )
 
     recompute_regimes()
-    return {
-        "imported": len(records),
-        "start": records[0][0],
-        "end": records[-1][0],
-        "source": str(path),
-    }
+    return result
 
 
 def add_daily(
@@ -332,12 +538,14 @@ def regime_segments(limit: int = 20) -> list[dict[str, Any]]:
             "SELECT trade_date, COALESCE(regime,'') FROM amv_daily WHERE regime != '' ORDER BY trade_date"
         ).fetchall()
     segments: list[dict[str, Any]] = []
-    for date, regime in rows:
+    # 循环变量不能再叫 date：模块顶部导入了 datetime.date（xlsx 的日期单元格要用），
+    # 叫 date 会把它遮掉（ruff F402）。
+    for trade_date, regime in rows:
         if segments and segments[-1]["regime"] == regime:
-            segments[-1]["end"] = str(date)
+            segments[-1]["end"] = str(trade_date)
             segments[-1]["days"] += 1
         else:
-            segments.append({"regime": str(regime), "start": str(date), "end": str(date), "days": 1})
+            segments.append({"regime": str(regime), "start": str(trade_date), "end": str(trade_date), "days": 1})
     return segments[-limit:]
 
 
@@ -372,8 +580,7 @@ def format_amv_status(day: AmvDay | None, segments: list[dict[str, Any]] | None 
         + (f"   涨幅 {day.pct_chg:+.4f}%" if day.pct_chg is not None else ""),
         f"区间: {day.regime or '未定'}   →   {icon}",
         "=" * 62,
-        f"规则: 单日跌幅 < {BEAR_THRESHOLD}% → 空头；"
-        f"单日或连续两日累计涨幅 ≥ {BULL_THRESHOLD}% → 多头；否则沿用",
+        f"规则: 单日跌幅 < {BEAR_THRESHOLD}% → 空头；单日或连续两日累计涨幅 ≥ {BULL_THRESHOLD}% → 多头；否则沿用",
     ]
     if segments:
         lines.append("\n【最近区间】")

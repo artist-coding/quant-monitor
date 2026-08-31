@@ -1,0 +1,41 @@
+[Unit]
+Description=Quant Monitor 活跃市值同步（百度网盘 → amv_daily）
+Documentation=file:///home/zx/quant-monitor/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+# 只排序、不拉起：两个 job 若排进同一事务（比如关机错过后开机一起补跑），
+# 保证日线先入库，活跃市值的"落后几个交易日"才判得准。
+# 刻意不用 Requires=——那会让每次活跃市值同步都顺带拉一次日线同步。
+After=quant-monitor-sync.service
+
+[Service]
+# oneshot：跑完就退出，由 quant-monitor-amv.timer 触发。
+# 和日线同步一样，Type=oneshot 不接受 Restart=，重试靠 timer 的第二个触发点。
+Type=oneshot
+WorkingDirectory=/home/zx/quant-monitor
+Environment=HOME=/home/zx
+Environment=PYTHONUNBUFFERED=1
+
+# 退出码 2 = 入库成功但活跃市值比行情库晚 1~3 个交易日，多半是上游当天还没出，
+# 晚一点那次会补上。不认成功的话每天 18:30 都会亮红，真出事时反而没人看。
+# 落后超过 3 个交易日脚本会退 1，那时才是真的 failed。
+SuccessExitStatus=2
+
+# 本机 socks5 代理会打断数据通路，报错还指向错误方向（表现为连接超时）。
+# 百度网盘是境内服务，走代理有害无益。脚本里还有一层兜底，两处都留着。
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+
+# 分享链接和提取码在 .env 里（主仓库是公开的，不能写进单元文件）。
+# 刻意不用 EnvironmentFile=- ：带 - 时文件缺失会被静默忽略，
+# 服务照常 success 但 AMV_BAIDU_SHARE_URL 是空的，脚本第一步就 die，
+# 至少还会报错——但下游若加了别的变量就未必了，统一按无 - 写。
+EnvironmentFile=/home/zx/quant-monitor/.env
+
+ExecStart=/usr/bin/python3 /home/zx/quant-monitor/scripts/sync_amv.py
+
+# 转存 + 下载，正常十几秒；限速时给足余量。
+TimeoutStartSec=900
+UMask=0077
+
+[Install]
+WantedBy=default.target

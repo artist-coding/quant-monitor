@@ -12,6 +12,7 @@ import pytest
 
 from modules import amv
 from modules.amv import BEAR_THRESHOLD, BULL_THRESHOLD, REGIME_BEAR, REGIME_BULL, classify
+from modules.database import get_connection
 
 
 # ==================== 状态机（纯函数，不碰库）====================
@@ -237,3 +238,166 @@ def test_format_status_reports_gate(temp_db):
 
 def test_format_status_when_empty(temp_db):
     assert "活跃市值库为空" in amv.format_amv_status(None)
+
+
+# ==================== 容器格式（csv / xlsx / zip）====================
+#
+# 活跃市值的原始表由用户从行情终端导出后放百度网盘，格式不受我们控制。
+# 这几条钉住的是"换一种导出方式也别静默少导数据"——少导的表现是
+# 区间往前回退，看日志一切正常。
+
+_ROWS = [
+    ("2026-08-01", 100.0, ""),
+    ("2026-08-04", 106.0, "多头区间"),
+    ("2026-08-05", 101.76, "空头区间"),
+]
+
+
+def _csv_text(header: str = "date,close,区间") -> str:
+    body = "\n".join(f"{d},{c},{r}" for d, c, r in _ROWS)
+    return f"{header}\n{body}\n"
+
+
+def test_import_accepts_chinese_headers(temp_db, tmp_path):
+    """列名是中文的导出同样要认，否则换个导出器就一行都进不来。"""
+    p = tmp_path / "cn.csv"
+    p.write_text(_csv_text("日期,收盘,区间"), encoding="utf-8-sig")
+    res = amv.import_history(p)
+    assert res["imported"] == 3
+    assert amv.get_regime().regime == REGIME_BEAR
+
+
+def test_import_accepts_gbk_csv(temp_db, tmp_path):
+    """GBK 编码的 CSV。
+
+    原来固定按 utf-8-sig + errors='replace' 解，GBK 文件不会报错，
+    而是表头变成乱码 → 一列都匹配不上 → 报"没有解析出任何有效行情行"，
+    错误信息指向文件为空，实际是编码猜错。
+    """
+    p = tmp_path / "gbk.csv"
+    p.write_bytes(_csv_text("日期,收盘,区间").encode("gbk"))
+    res = amv.import_history(p)
+    assert res["imported"] == 3
+
+
+def test_import_xlsx_with_datetime_cells(temp_db, tmp_path):
+    """xlsx 的日期列 openpyxl 会还原成 datetime 对象。
+
+    str(datetime) 是 '2026-08-01 00:00:00'，_norm_date 会数出 14 位数字
+    然后抛「无法解析日期」——错误信息指向格式非法，实际是类型没转。
+    """
+    openpyxl = pytest.importorskip("openpyxl")
+    import datetime as _dt
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["日期", "收盘", "区间"])
+    for d, c, r in _ROWS:
+        y, m, day = (int(x) for x in d.split("-"))
+        ws.append([_dt.datetime(y, m, day), c, r])
+    p = tmp_path / "amv.xlsx"
+    wb.save(p)
+
+    res = amv.import_history(p)
+    assert res["imported"] == 3
+    assert res["start"] == "20260801" and res["end"] == "20260805"
+    assert amv.verify_against_imported()["mismatches"] == []
+
+
+def test_import_zip_with_gbk_member_names(temp_db, tmp_path):
+    """zip 里多份 CSV 拼起来，且成员名是 GBK、没置 UTF-8 标志位。
+
+    Windows/网盘打的包就是这样。zipfile 会按 cp437 把名字解成乱码，
+    乱码不影响解压内容，但会让「挑出 .csv」这步失灵——
+    包里明明有表格，却报「没有表格文件」。
+    """
+    import zipfile
+
+    p = tmp_path / "amv.zip"
+    with zipfile.ZipFile(p, "w") as zf:
+        for name, rows in (("活跃市值_上.csv", _ROWS[:1]), ("活跃市值_下.csv", _ROWS[1:])):
+            info = zipfile.ZipInfo(name.encode("gbk").decode("cp437"))
+            info.flag_bits &= ~0x800
+            body = "date,close,区间\n" + "\n".join(f"{d},{c},{r}" for d, c, r in rows) + "\n"
+            zf.writestr(info, body.encode("utf-8-sig"))
+
+    res = amv.import_history(p)
+    assert res["imported"] == 3
+    # 两份文件拼起来顺序不保证，start/end 依赖排序
+    assert res["start"] == "20260801" and res["end"] == "20260805"
+
+
+def test_import_is_idempotent(temp_db, tmp_path):
+    """整表 upsert：每天下全量表重复导入不能翻倍。"""
+    p = tmp_path / "a.csv"
+    p.write_text(_csv_text(), encoding="utf-8-sig")
+    amv.import_history(p)
+    amv.import_history(p)
+    assert len(amv.recent(100)) == 3
+
+
+def test_import_skips_rows_without_close(temp_db, tmp_path):
+    """只有日期没有收盘价的补录占位行要跳过，并且**计数**。
+
+    区间判定的唯一可信来源是收盘价，占位行进库会拖出一个假涨幅。
+    """
+    p = tmp_path / "a.csv"
+    p.write_text("date,close\n2026-08-01,100\n2026-08-02,\n2026-08-03,\n", encoding="utf-8-sig")
+    res = amv.import_history(p)
+    assert res["imported"] == 1
+    assert res["skipped"] == 2
+
+
+def test_dry_run_does_not_write(temp_db, tmp_path):
+    p = tmp_path / "a.csv"
+    p.write_text(_csv_text(), encoding="utf-8-sig")
+    res = amv.import_history(p, dry_run=True)
+    assert res["imported"] == 3 and res["dry_run"] is True
+    assert amv.get_regime() is None, "dry_run 落库了"
+
+
+def test_unparseable_error_names_the_headers(temp_db, tmp_path):
+    """列名对不上时，错误信息要把读到的表头说出来。
+
+    只说「没有有效行情行」会让人去查文件是不是空的，
+    实际上多半是导出器换了列名。
+    """
+    p = tmp_path / "a.csv"
+    p.write_text("时刻,点位\n2026-08-01,100\n", encoding="utf-8-sig")
+    with pytest.raises(ValueError, match="时刻"):
+        amv.import_history(p)
+
+
+def test_old_xls_gives_actionable_error(temp_db, tmp_path):
+    p = tmp_path / "a.xls"
+    p.write_bytes(b"\xd0\xcf\x11\xe0")  # OLE2 magic
+    with pytest.raises(ValueError, match="convert-to xlsx"):
+        amv.import_history(p)
+
+
+def test_daily_file_does_not_wipe_official_labels(temp_db, tmp_path):
+    """每日文件没有「区间」列时，不能清掉历史表导进来的官方标注。
+
+    实测的日更文件只有 date,open,high,low,close,volume,amount 七列。
+    直接 `regime_imported = excluded.regime_imported` 会把 8180 行标注
+    一次性覆盖成空串——那是校验区间规则的唯一地面真值，清掉之后
+    `zt amv verify` 永远返回 0/0，而且不报任何错。
+    """
+    enhanced = tmp_path / "enhanced.csv"
+    enhanced.write_text(
+        "date,open,close,区间\n2026-08-01,99,100.00,\n2026-08-04,105,106.00,多头区间\n",
+        encoding="utf-8-sig",
+    )
+    amv.import_history(enhanced)
+    assert amv.verify_against_imported()["total"] == 1
+
+    # 日更文件：同样两天，但没有区间列，且这次连 open 都不给
+    daily = tmp_path / "daily.csv"
+    daily.write_text("date,close\n2026-08-01,100.00\n2026-08-04,106.00\n", encoding="utf-8-sig")
+    amv.import_history(daily)
+
+    v = amv.verify_against_imported()
+    assert v["total"] == 1, "官方标注被日更文件清掉了"
+    assert v["mismatches"] == []
+    with get_connection() as conn:
+        assert conn.execute("SELECT open FROM amv_daily WHERE trade_date='20260804'").fetchone()[0] == 105
