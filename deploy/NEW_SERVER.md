@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | `.env`（Tushare Token、LLM Key、网盘分享链接） | 仓库根 | `.gitignore` 排除。主仓库是 public，密钥进去就等于公开 |
 | `data/stock_data.db` | `data/` | 1.8G，`daily_kline` 1075 万行。体积超 GitHub 上限，且是 Tushare 行情数据，转发受其条款约束 |
-| Python 依赖 | `~/.local/lib/python3.10/site-packages` | 要在新机重装，且**装到哪里决定了单元文件怎么写**（见下） |
+| Python 依赖 | venv，或 `~/.local/lib/python3.X/site-packages` | 要在新机重装，且**装到哪里决定了单元文件怎么写**（见下） |
 | `frontend/node_modules` + `frontend/dist` | `frontend/` | 必须在目标机重装重建 |
 | BaiduPCS-Go 二进制 + Cookie | `~/.local/bin/`、`~/.config/BaiduPCS-Go/` | Cookie 明文存储且 1~3 个月过期 |
 | 单元里的绝对路径、linger | `deploy/*.user`、`loginctl` | 八份单元全部硬编码 `/home/zx`；linger 是机器级开关 |
@@ -25,9 +25,15 @@ sudo apt install -y git curl unzip zstd python3-pip
 
 `unzip` 用来装 BaiduPCS-Go，`zstd` 用来解备份快照——这两个都是到了用的时候才发现没装。
 
-**Node 版本是硬门槛**：`frontend` 用的 vite 8，`engines` 写死 `^20.19.0 || >=22.12.0`。
-Ubuntu 22.04 的 `apt install nodejs` 装的是 12.22，跑 `npm run build` 会直接报 engine 不匹配。
-走 NodeSource 或 nvm：
+**Node 版本是硬门槛**：`frontend` 用的 vite 8，vite 自己的 `engines` 写死
+`^20.19.0 || >=22.12.0`。先看发行版自带的够不够：
+
+```bash
+node -v          # 满足 ^20.19 || >=22.12 就跳过本节（Debian 13 自带 v24，够用）
+```
+
+够就往下走。不够才装 —— Ubuntu 22.04 的 `apt install nodejs` 装的是 12.22，
+跑 `npm run build` 会直接报 engine 不匹配。走 NodeSource 或 nvm：
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
@@ -35,7 +41,14 @@ sudo apt install -y nodejs
 node -v          # 要 >= 22.12
 ```
 
-Python 要 ≥ 3.10（`pyproject.toml` 的 `requires-python`）。
+别只看大版本号：21.x 和 22.0 ~ 22.11 都**不**满足那条 range。
+
+Python 要 ≥ 3.10（`pyproject.toml` 的 `requires-python`）。装依赖之前先探一下 PEP 668，
+它决定第 1 步走哪条路：
+
+```bash
+ls /usr/lib/python3*/EXTERNALLY-MANAGED    # 有输出 = 系统 Python 被托管，必须走 venv
+```
 
 **时区必须是 `Asia/Shanghai`**：
 
@@ -54,37 +67,84 @@ timedatectl | grep "Time zone"
 ```bash
 git clone https://github.com/artist-coding/quant-monitor.git ~/quant-monitor
 cd ~/quant-monitor
+```
+
+### 默认走 venv
+
+Ubuntu 24.04 / Debian 12 起系统 Python 带 PEP 668 标记，`pip install --user` 会直接
+`error: externally-managed-environment`。venv 在哪个发行版上都能用，所以就走它：
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .       # 装 zt / zt-web / zt-monitor 入口，落在 .venv/bin
+```
+
+代价是**必须同步改三份单元的 `ExecStart`**（第 4 步末尾有现成的 sed），漏改哪一份，
+那一份就 `ModuleNotFoundError`。`zt` 这些命令也在 `.venv/bin` 下，要么
+`source .venv/bin/activate`，要么把 `$PWD/.venv/bin` 加进 PATH。
+
+<details>
+<summary>备选：装到用户目录，保持单元文件一行不动</summary>
+
+`ls /usr/lib/python3*/EXTERNALLY-MANAGED` 没输出的老机器（旧服务器就是这种）：
+
+```bash
 pip install --user -r requirements.txt
-pip install --user -e .          # 装 zt / zt-web / zt-monitor 入口，落在 ~/.local/bin
+pip install --user -e .          # 入口落在 ~/.local/bin
+```
+
+有 PEP 668 标记又坚持走这条，得显式绕开：
+
+```bash
+pip install --user --break-system-packages -r requirements.txt
+pip install --user --break-system-packages -e .
 ```
 
 `~/.local/bin` 不在 PATH 的话补一句 `export PATH="$HOME/.local/bin:$PATH"` 到 `~/.bashrc`。
 
+</details>
+
 ### 装在哪里决定了单元怎么写
 
-四份跑 Python 的单元（api / sync / amv）都是这两行：
+`deploy/` 里跑 Python 的单元是**三份**——`api` / `sync` / `amv` 的 `.service.user`
+（六份 `.user` 里剩下的是两条 timer 和跑 node 的 web）：
+
+```bash
+grep -l 'ExecStart=/usr/bin/python3' deploy/*.user   # 3 个
+ls deploy/*.user | wc -l                             # 6 个
+```
+
+这三份现在都是这两行：
 
 ```ini
 Environment=HOME=/home/zx
 ExecStart=/usr/bin/python3 ...
 ```
 
-系统 python 靠 `HOME` 找到 `~/.local/lib/pythonX.Y/site-packages`，所以 `pip install --user` 装的包能被找到。
-**这条链路很容易在新机上断掉，而且断了以后报的是 `ModuleNotFoundError`，看着像代码问题**：
+系统 python 靠 `HOME` 找到 `~/.local/lib/pythonX.Y/site-packages`（`X.Y` 是**你机器上的
+实际版本**，`python3 -V` 一看便知：旧机 3.10，Debian 13 是 3.13），所以**只有走上面那条
+`pip install --user` 备选路线，单元才能原样不动**。
+**这条链路很容易在新机上断掉，而且断了以后报的是 `ModuleNotFoundError`，看着像代码问题。**
 
-- **Ubuntu 24.04 / Debian 12 起**，PEP 668 会让 `pip install --user` 直接失败
-  （`error: externally-managed-environment`）。两个选择：
-  - 用 venv（推荐），但**必须同步改四份单元的 `ExecStart`**，把 `/usr/bin/python3`
-    换成 `$REPO/.venv/bin/python`。漏改哪一份，那一份就 `ModuleNotFoundError`。
-  - 或者 `pip install --user --break-system-packages -r requirements.txt`，保持单元不动。
-- 用 venv 的话，第 4 步的 sed 后面再追一条：
+走 venv 的话，第 4 步的 sed 后面再追一条：
 
-  ```bash
-  sed -i "s#^ExecStart=/usr/bin/python3#ExecStart=$REPO/.venv/bin/python#" \
-      ~/.config/systemd/user/quant-monitor-{api,sync,amv}.service
-  ```
+```bash
+sed -i "s#^ExecStart=/usr/bin/python3#ExecStart=$REPO/.venv/bin/python#" \
+    ~/.config/systemd/user/quant-monitor-{api,sync,amv}.service
+```
 
-  `quant-monitor-web.service` 跑的是 node，不用改。
+`quant-monitor-web.service` 跑的是 node，不用改。
+
+### 另外两份不带 `.user` 的单元
+
+`deploy/quant-monitor-api.service`（旧机 root 部署在 `/root/quant-monitor`）和
+`deploy/quant-monitor-api.service.newserver`（新机 system 级方案，要 sudo）是
+**system 级的另一套**，跟用户级那套二选一、不要混装（`deploy/README.md` 开头有对照表）。
+第 4 步的 `deploy/*.user` 循环**故意装不到它们**。
+
+真要手工 `install` 其中一份，记住两点：它们同样写死了 `ExecStart=/usr/bin/python3`，
+走 venv 时一样要改；路径写的是 `/root` 或 `/home/zx`，也得跟着替换。
 
 依赖版本对不齐时看 `requirements.core.txt`（本机实际跑着的关键包的确切版本）
 和 `requirements.lock.txt`（全量快照）。
@@ -202,7 +262,8 @@ for y,n in c.execute(\"SELECT substr(cal_date,1,4), COUNT(*) FROM trade_cal WHER
 
 ## 4. 装单元：先把路径改掉
 
-八份单元里的 `/home/zx` 和 `/home/zx/quant-monitor` 全是写死的。用户名或仓库位置一变就得重写：
+八份单元里的 `/home/zx` 和 `/home/zx/quant-monitor` 全是写死的，用户名或仓库位置一变就得重写。
+下面这个循环处理用户级那六份（`*.user`），另两份 system 级的见第 1 步末尾：
 
 ```bash
 cd ~/quant-monitor
