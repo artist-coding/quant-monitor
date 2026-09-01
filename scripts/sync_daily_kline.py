@@ -69,7 +69,7 @@ def pending_trade_days(end_date: str, max_days: int) -> tuple[list[str], int]:
 
     以 ``daily_kline`` 的最新日期为起点，向后取本地交易日历里 is_open=1 的日子。
     交易日历没覆盖到 end_date 时返回空——宁可这天不同步，也不要在没有日历的
-    情况下瞎猜（trade_cal 接口限流 1 次/小时，现拉多半拉不到）。
+    情况下瞎猜（trade_cal 接口限流 1 次/小时且 5 次/天，现拉多半拉不到）。
 
     Returns:
         (要补的日期列表, 因 max_days 被截掉的天数)

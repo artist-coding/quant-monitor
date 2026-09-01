@@ -102,7 +102,7 @@ def market_days_ahead(amv_date: str) -> tuple[str | None, int]:
     """行情库比活跃市值多出几个交易日。
 
     刻意数 ``daily_kline`` 里的实际交易日而不是查 ``trade_cal``：
-    交易日历经常整年整年地缺（``trade_cal`` 接口限流 1 次/小时，多年回补时
+    交易日历经常整年整年地缺（``trade_cal`` 限流 1 次/小时 + 5 次/天，多年回补时
     很容易只拉到第一年），拿它当基准会在日历缺失时算出 0，把"落后很久"报成"正常"。
 
     Returns:
