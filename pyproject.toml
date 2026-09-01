@@ -27,7 +27,13 @@ dependencies = [
     "tushare>=1.4.0",
     "python-dotenv>=1.0.0",
     "pandas>=2.0.0",
+    "numpy>=1.26.0",
     "requests>=2.28.0",
+    "httpx>=0.24.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -39,10 +45,11 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
-# zt-web 这个 entry point 一直缺声明：装完 pip install -e . 直接跑必然 ImportError
+# 这三项现在已经在上面的核心 dependencies 里了（api/ 是全线依赖，不是可选功能）。
+# 这个 extra 保留只为兼容既有的 `pip install -e .[web]` 写法，版本下限与核心保持一致。
 web = [
-    "fastapi>=0.110.0",
-    "uvicorn>=0.29.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
     "pydantic-settings>=2.0.0",
 ]
 # 高阶行情数据层（modules/advanced_data.py），不装也不影响主流程：
