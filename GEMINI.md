@@ -10,12 +10,12 @@ This project is a Python-based "Thinking Operating System" and quantitative trad
   - **Data Source:** Tushare API (requires `TUSHARE_TOKEN`).
   - **Database:** SQLite (stored in `data/stock_data.db` by default).
   - **Analysis:** Pandas (vectorized indicator calculations), Technical indicators (60+), Strategies (30+).
-  - **Interaction:** CLI (via `modules/cli.py`) and Intent-based Chat (`modules/intent_chat.py`).
+  - **Interaction:** CLI (via `modules/cli.py`) and the FastAPI web API (`api/main.py`).
   - **LLM Integration:** Supports OpenAI-compatible APIs and MiniMax for character-based commentary and decision frameworks.
 - **Architecture:** 
-  - **Data Layer:** Tushare API -> `data_sync.py` -> SQLite.
-  - **Logic Layer:** `indicators/` (calculation) -> `strategies/` (detection) -> `screener.py` / `backtest.py`.
-  - **Interface Layer:** `cli.py` (tools) -> `intent_router.py` (routing) -> `SKILL.md` (LLM persona).
+  - **Data Layer:** Tushare API -> `modules/data_sync/` -> SQLite.
+  - **Logic Layer:** `modules/indicators/` (calculation) -> `modules/strategies/` (detection) -> `modules/screener/` / `modules/backtest.py`.
+  - **Interface Layer:** `modules/cli.py` (tools) -> `api/routes/` (HTTP) -> `SKILL.md` (LLM persona).
 
 ## Building and Running
 
@@ -36,7 +36,7 @@ This project is a Python-based "Thinking Operating System" and quantitative trad
 - **Analyze Stock:** `python -m modules.cli analyze <CODE>` (or use `zt analyze <CODE>` if installed)
 - **Screen Stocks:** `python -m modules.cli screen --strategy <STRATEGY> --limit 20`
 - **Watchlist:** `python -m modules.cli watchlist scan`
-- **Intent Chat:** `python -m modules.intent_chat "Query string"`
+- **Web API:** `python -m uvicorn api.main:app --port 8010`
 - **Run Tests:** `python -m pytest tests/`
 
 ## Development Conventions
@@ -59,7 +59,6 @@ This project is a Python-based "Thinking Operating System" and quantitative trad
 ## Key Files & Directories
 - `SKILL.md`: The core LLM persona definition and agentic protocol.
 - `modules/`: Main source code.
-- `knowledge/`: Trading system theory and documentation.
-- `rules/`: LLM role frameworks for career and life advice.
+- `knowledge/`: Trading system theory and documentation (32 files, declared in `SKILL.md`).
 - `data/`: Local SQLite database storage.
 - `scripts/`: Batch processing and maintenance scripts.

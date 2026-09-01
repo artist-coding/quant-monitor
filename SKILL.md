@@ -176,7 +176,7 @@ description: |
 | `modules.screener.screen_stocks()` | 用户要求选股 | criteria | list[StockScore] |
 | `modules.indicators.detect_volume_ratio_strategy()` | 需要量比战法判断 | klines | 场景+操作建议 |
 | `modules.trade_manager.*` | 用户要求记录/查询交易 | 交易描述 | 记录 ID 或列表 |
-| `corpus/quality_check.py` | 需要验证 SKILL.md 质量时 | SKILL.md | 8 项评分报告 |
+| `docs/archive/corpus/quality_check.py` | 需要验证 SKILL.md 质量时 | SKILL.md | 8 项评分报告 |
 | `zt` CLI 命令 | 宿主调用数据工具 | 各种参数 | JSON/文本 |
 
 ### 失败退路
@@ -225,7 +225,7 @@ description: |
 | 版本 | v3.3.1 |
 | 更新日期 | 2026-07-04 |
 | 语料截止 | 2026-04-18 及后续更新 |
-| 质量检查 | `corpus/quality_check.py SKILL.md --strict` |
+| 质量检查 | `python docs/archive/corpus/quality_check.py SKILL.md --strict` |
 | 许可证 | MIT |
 | 维护者 | 社区维护（基于公开语料蒸馏） |
 
@@ -614,7 +614,7 @@ python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; fr
 
 ## 附录：调研来源
 
-调研过程详见 `references/research/` 目录。
+调研过程详见 `docs/archive/references/research/` 目录。
 
 ### 一手来源
 - ztalk 系列 B 站视频 transcript 13 个（约 12.7 万字）

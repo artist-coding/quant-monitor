@@ -27,6 +27,12 @@
 
 ### 架构分层
 
+> **注意：下面这棵树还是 e47a1b8「精简」之前的样子**，里面有 50 条指向已经不存在的
+> 模块和目录（self_optimizer、simulator、intent_router.py、rules，以及根目录下的
+> corpus、references —— 后两个已归档到 docs/archive/）。这些条目写在代码块里，
+> `tests/test_doc_paths.py` 只校验行内反引号，挡不住它们。
+> 改任何模块前先 `ls` 确认，别照树里写的路径去找。
+
 ```
 Python 数据层（modules/）              LLM 角色层（SKILL.md）
 ├─ datasource.py         统一数据源协议      ├─ 角色扮演规则
@@ -148,10 +154,8 @@ rules/
 
 **关键设计原则**：Python 层只负责 **数据准备**，所有点评、分析话术由 LLM 用 Z 哥角色生成，避免“AI 味”。宿主通过 CLI `--json` 或 Web API 获取结构化数据。
 
-**自优化双管线说明**：
-- `self_optimizer/`（Darwin 管线）：LLM 驱动的参数自优化，通过变异 + 评分 + 反射黑名单迭代策略参数组合。
-- `simulator/walk_forward`：滚动窗口样本内训练 + 样本外验证的参数寻优。
-- 两者**互补** —— Darwin 做探索性优化（发现新参数组合），walk-forward 做验证性优化（防止过拟合）。典型流程：Darwin 产出候选参数集 → walk-forward 验证其样本外稳定性 → 通过者写回 `param_registry`。
+**自优化管线已下线**：Darwin 管线（self_optimizer）与 walk-forward（simulator）在
+e47a1b8「精简: 移除实验性子系统」中一并删除，只有参数注册表迁到 `modules/param_registry.py` 保留。
 
 ---
 
@@ -186,7 +190,6 @@ rules/
 | `frontend/vite.config.ts` | Vite 配置（端口 5173，代理 `/api` 到 localhost:8000） |
 | `.editorconfig` | 编辑器格式统一配置 |
 | `.pre-commit-config.yaml` | 提交前 ruff、部分 mypy、SKILL.md 质量门 |
-| `.github/workflows/test.yml` | CI：测试、lint、质量门、真实数据回归、pre-commit |
 | `.github/workflows/e2e-cron.yml` | 每周一真实数据回归 cron |
 
 ### 环境变量说明（`.env.example`）
@@ -207,6 +210,12 @@ IM_PUSH_WEBHOOK=                    # 可选，飞书 webhook
 ---
 
 ## 项目结构与模块划分
+
+> **注意：下面这棵树还是 e47a1b8「精简」之前的样子**，里面有 50 条指向已经不存在的
+> 模块和目录（self_optimizer、simulator、intent_router.py、rules，以及根目录下的
+> corpus、references —— 后两个已归档到 docs/archive/）。这些条目写在代码块里，
+> `tests/test_doc_paths.py` 只校验行内反引号，挡不住它们。
+> 改任何模块前先 `ls` 确认，别照树里写的路径去找。
 
 ```
 zettaranc-skill/
@@ -453,22 +462,24 @@ npm run lint       # ESLint 检查
 
 ```bash
 # 验证 SKILL.md 是否通过 12 项质量标准
-python corpus/quality_check.py SKILL.md
+python docs/archive/corpus/quality_check.py SKILL.md
 
 # strict 模式（任一不通过则 exit 1）
-python corpus/quality_check.py SKILL.md --strict
+python docs/archive/corpus/quality_check.py SKILL.md --strict
 ```
 
 ### 语料采集脚本
 
-| 脚本 | 用法 | 说明 |
-|------|------|------|
-| `corpus/batch_download_bilibili.py` | `python corpus/batch_download_bilibili.py` | 下载 B 站 ztalk 音频 |
-| `corpus/batch_transcribe.py` | `python corpus/batch_transcribe.py` | 音频转写文本 |
-| `corpus/srt_to_transcript.py` | `python corpus/srt_to_transcript.py input.srt` | 字幕清洗为纯文本 |
-| `corpus/merge_research.py` | `python corpus/merge_research.py` | 合并调研结果 |
+| 脚本 | 说明 |
+|------|------|
+| `docs/archive/corpus/batch_download_bilibili.py` | 下载 B 站 ztalk 音频 |
+| `docs/archive/corpus/batch_transcribe.py` | 音频转写文本 |
+| `docs/archive/corpus/srt_to_transcript.py` | 字幕清洗为纯文本 |
+| `docs/archive/corpus/merge_research.py` | 合并调研结果 |
 
-**路径约定**：部分脚本使用硬编码相对路径，请在项目根目录执行，并注意 `references/sources/` 中的原始语料不入库。
+**这几个脚本已归档**：连同 `docs/archive/references/` 语料档案一起挪进了 `docs/archive/`，脚本里的
+`PROJECT_ROOT / "references" / ...` 是按当年仓库根布局写的，现在直接跑会找不到目录，
+要用先自己改路径。原始语料（`references/sources/`）因版权和体积原因从来不入库。
 
 ---
 
@@ -537,30 +548,48 @@ python corpus/quality_check.py SKILL.md --strict
 - **数据工厂**：`make_kline_row()`、`make_daily_data()`、`generate_uptrend_klines()`、`generate_downtrend_klines()`、`generate_b1_scenario()` 等
 - **数据库隔离**：所有测试使用临时 SQLite 文件，互不干扰
 
-### 测试覆盖范围（当前 52 个测试文件）
+### 测试覆盖范围（当前 43 个测试文件）
+
+这张表就是 `tests/` 的清单本身，`tests/test_doc_paths.py` 会校验两边一一对应 ——
+增删测试文件时同步改这里，否则测试挂。
 
 | 测试文件 | 覆盖范围 |
 |---------|---------|
 | `test_database.py` | 路径解析、连接上下文、事务回滚、表初始化、幂等性 |
+| `test_datasource.py` | DataSource 协议与各实现 |
+| `test_tushare_client.py` | Tushare 中转 API 客户端（mock 模式） |
+| `test_bridge_client.py` | tushare-data-bridge HTTP 客户端与降级网关 |
+| `test_rate_limiter.py` | 120次/分钟限流器 |
+| `test_data_sync.py` / `test_data_sync_extensions.py` | data_sync 子包重构回归、同步扩展 |
+| `test_market_daily_sync.py` | 收盘后全市场日线同步 |
+| `test_trade_cal_index.py` | 交易日历本地缓存 + 指数日线同步 |
+| `test_advanced_data.py` | 高阶行情数据层（东财/同花顺公开接口） |
+| `test_amv.py` | 活跃市值多空区间 |
 | `test_indicators.py` | 60+ 指标计算（MA/EMA/KDJ/MACD/背离/BBI/RSI/WR/量比/双线/单针/B1B2/呼吸结构/SB1/沙漏/牛绳/蜈蚣图等） |
-| `test_strategies.py` | B1/B2/B3/SB1/长安/四分之三阴量/娜娜/异动地量/出货五式等 |
-| `test_screener.py` / `test_screener_p3.py` | 选股评分、P3 指标接入评分 |
-| `test_backtest.py` / `test_loop_engine.py` / `test_backtest_six_step.py` | 回测框架与六步闭环 |
-| `test_portfolio_diagnosis.py` | 持股检查、防卖飞、出货信号、战法匹配 |
-| `test_watchlist.py` | 观察池增删改查、批量扫描 |
+| `test_indicator_cache.py` | 指标缓存的保存、加载与内存缓存 |
+| `test_indicators_realdata.py` | 真实 Tushare 数据指标回归（无 token 时 skip） |
 | `test_wave_theory.py` | 三波理论识别 |
 | `test_kirin_detector.py` | 麒麟会四阶段 |
-| `test_cli_screen.py` / `test_cli_subparser.py` | CLI 子命令分发与参数解析 |
-| `test_data_e2e.py` / `test_data_sync_extensions.py` | 数据层端到端与同步扩展 |
+| `test_strategies.py` | B1/B2/B3/SB1/长安/四分之三阴量/娜娜/异动地量/出货五式等 |
+| `test_exam_rules.py` | 战法体系专项考试规则验证 |
+| `test_buy_decision.py` | 买点确认引擎 |
+| `test_sell_decision.py` | 逐步放飞阶梯（纯函数部分，不碰数据库） |
+| `test_market_context.py` | 大盘环境判定 |
+| `test_themes.py` | 主线子系统 |
+| `test_screener.py` / `test_screener_p3.py` / `test_screener_data.py` | 选股评分、P3 指标接入、DataSource 注入 |
+| `test_portfolio_diagnosis.py` | 持股检查、防卖飞、出货信号、战法匹配 |
+| `test_watchlist.py` | 观察池增删改查、批量扫描 |
+| `test_backtest.py` / `test_framework_backtest.py` | 精简回测框架、买点框架历史回放 |
+| `test_param_registry.py` | 策略参数注册表 |
 | `test_trade_manager.py` / `test_trade_parser.py` | 交易记录 CRUD、口语化解析 |
-| `test_intent_router.py` | 意图路由规则匹配 |
-| `test_quality_check.py` | SKILL.md 12 项质量检查 |
-| `test_rate_limiter.py` | 120次/分钟限流器 |
-| `test_bridge_client.py` | tushare-data-bridge HTTP 客户端与降级网关 |
+| `test_review_memory.py` | 复盘案例库 |
 | `test_monitor.py` / `test_notifier.py` | 自选股监控与推送 |
-| `test_tracking_system.py` | 自我改进跟踪池 |
-| `test_self_optimizer_*.py` / `test_param_registry.py` / `test_mutator.py` / `test_scorer.py` / `test_break_signal.py` / `test_reflex_blacklist.py` / `test_backtest_scorer.py` | Darwin 自优化管线 |
-| `test_indicators_realdata.py` | 真实 Tushare 数据指标回归（无 token 时 skip） |
+| `test_daily_api.py` | 每日选股 API（`api/routes/daily.py` + `api/services/daily_service.py`） |
+| `test_cli_screen.py` / `test_cli_subparser.py` | CLI 子命令分发与参数解析 |
+| `test_research_service.py` / `test_kimi_trace.py` | Kimi Swarm 股票调研服务、会话 trace 导出 |
+| `test_commentary_knowledge.py` | `knowledge/` 引用完整性：代码与 SKILL.md 声明的知识文件必须真实存在 |
+| `test_doc_paths.py` | 文档里的仓库相对路径必须真实存在，测试清单与 `tests/` 一一对应 |
+| `test_quality_check.py` | SKILL.md 12 项质量检查 |
 
 ### 运行预期
 
@@ -576,7 +605,7 @@ $ python -m pytest tests/ -v
 1. **`SKILL.md`** —— 直接影响 Skill 表现，任何改动都需语料支撑
 2. **`knowledge/*.md`** —— 知识文档，补充新语料或修正旧发现时更新
 3. **`modules/*.py`** —— 数据层代码改动需同步更新测试
-4. **`references/research/*.md`** —— 调研档案，新增语料源时更新
+4. **`docs/archive/references/research/*.md`** —— 调研档案（已归档），新增语料源时更新
 5. **`README.md` / `docs/CHANGELOG.md`** —— 项目对外文档，版本发布时同步更新
 6. **`api/` / `frontend/`** —— Web 看板，仅在交互层需要改进时修改
 7. **`scripts/`** —— 工具脚本，仅在数据管道或检查逻辑需要改进时修改
@@ -622,13 +651,13 @@ $ python -m pytest tests/ -v
 
 | 任务 | 操作 |
 |------|------|
-| 更新心智模型或交易规则 | 先查 `references/research/01-writings.md` 和 `05-decisions.md` → 修改 `SKILL.md` 与对应 `knowledge/*.md` → 运行 `corpus/quality_check.py SKILL.md` |
-| 补充新语料 | 将新文章放入 `references/sources/articles/` → 更新对应 `references/research/*.md` → **不要**将原始语料加入 git |
-| 新增 B 站视频 transcript | `python corpus/batch_download_bilibili.py && python corpus/batch_transcribe.py` |
+| 更新心智模型或交易规则 | 先查 `docs/archive/references/research/01-writings.md` 和 `05-decisions.md` → 修改 `SKILL.md` 与对应 `knowledge/*.md` → 运行 `python docs/archive/corpus/quality_check.py SKILL.md` |
+| 补充新语料 | 将新文章放入 `references/sources/articles/`（不入库） → 更新对应 `docs/archive/references/research/*.md` → **不要**将原始语料加入 git |
+| 新增 B 站视频 transcript | `python docs/archive/corpus/batch_download_bilibili.py && python docs/archive/corpus/batch_transcribe.py`（脚本已归档，路径需自行调整） |
 | 发布新版本 | 更新 `SKILL.md` → 更新 `docs/CHANGELOG.md` → 同步 `README.md` 版本 badge → 考虑同步 `pyproject.toml` 版本号 → 打 git tag |
 | 验证风格一致性 | 对照「风格验证清单」逐项检查 |
 | 修复数据层 bug | 修改 `modules/*.py` → 补充/更新 `tests/test_*.py` → `pytest tests/ -v` |
-| 接入新 Tushare 接口 | 修改 `modules/tushare_client.py` 或 `modules/data_sync.py` → 确认 `modules/database.py` 表结构支持 → 补充保存逻辑与测试 |
+| 接入新 Tushare 接口 | 修改 `modules/tushare_client.py` 或 `modules/data_sync/` → 确认 `modules/database.py` 表结构支持 → 补充保存逻辑与测试 |
 | 初始化全新环境 | `cp .env.example .env` → 填入 Token → `python -m modules.database` → `python -m modules.data_sync sync` → `pytest tests/ -v` |
 | 运行 Web 看板 | 安装 `fastapi uvicorn pydantic-settings` → `zt-web` → `cd frontend && npm install && npm run dev` |
 | 跑 Darwin 自优化 | `zt self-optimize --target trading --rounds 3`（默认 dry_run） |
