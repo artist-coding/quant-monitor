@@ -518,7 +518,8 @@ def cmd_sync(args):
             raise SystemExit(1)
 
     elif action == "trade-cal":
-        # 注意：Tushare trade_cal 接口被限流到 1 次/分钟，建议按整年拉取
+        # 注意：Tushare trade_cal 接口被限流到 1 次/小时（2026-09-01 实测，上游原文
+        # 「您访问接口(trade_cal)频率超限(1次/小时)」），所以务必按整年拉，一次一年
         syncer = DataSyncer(datasource=get_datasource("tushare"))
         year = datetime.now().strftime("%Y")
         start_date = args.start or f"{year}0101"
@@ -1368,7 +1369,7 @@ def build_parser():
     p_sync_market.add_argument("--no-refresh-stock-basic", action="store_true", help="不刷新上市股票基本信息")
     p_sync_market.add_argument("--skip-calendar-check", action="store_true", help="跳过交易日历检查（仅排障使用）")
     p_sync_market.add_argument("--json", action="store_true", help="JSON 输出")
-    p_sync_cal = p_sync_sub.add_parser("trade-cal", help="同步交易日历（接口限流 1 次/分钟，建议按整年拉）")
+    p_sync_cal = p_sync_sub.add_parser("trade-cal", help="同步交易日历（接口限流 1 次/小时，按整年拉，多年之间隔一小时）")
     p_sync_cal.add_argument("--start", help="起始日期 YYYYMMDD，默认今年 0101")
     p_sync_cal.add_argument("--end", help="结束日期 YYYYMMDD，默认今年 1231")
     p_sync_cal.add_argument("--exchange", default="SSE", help="交易所代码，默认 SSE")

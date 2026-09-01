@@ -695,7 +695,7 @@ def init_database(verbose: bool = True) -> None:
         """)
 
         # 12. 交易日历本地缓存表
-        # Tushare trade_cal 接口限流严重（1 次/分钟），本地缓存后避免每日同步反复请求
+        # Tushare trade_cal 接口限流严重（实测 1 次/小时），本地缓存后避免每日同步反复请求
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS trade_cal (
                 exchange TEXT NOT NULL,          -- 交易所代码（SSE/SZSE 等）
