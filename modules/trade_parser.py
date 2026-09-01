@@ -4,7 +4,7 @@
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 from dataclasses import dataclass
 
@@ -162,9 +162,9 @@ class TradeParser:
                 if "今天" in date_text or "今儿" in text:
                     date_str = today.strftime("%Y-%m-%d")
                 elif "昨天" in date_text or "昨儿" in text:
-                    date_str = (today.replace(day=today.day - 1)).strftime("%Y-%m-%d")
+                    date_str = (today - timedelta(days=1)).strftime("%Y-%m-%d")
                 elif "前天" in date_text or "前日" in text:
-                    date_str = (today.replace(day=today.day - 2)).strftime("%Y-%m-%d")
+                    date_str = (today - timedelta(days=2)).strftime("%Y-%m-%d")
                 elif "-" in date_text or "/" in date_text:
                     if len(date_text) == 10:  # yyyy-mm-dd
                         date_str = date_text.replace("/", "-")
