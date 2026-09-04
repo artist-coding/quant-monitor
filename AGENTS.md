@@ -237,7 +237,7 @@ zettaranc-skill/
 │   ├── CONTRIBUTING.md         # 贡献指南
 │   ├── USER_GUIDE.md           # 详细使用手册
 │   ├── CONFIG_GUIDE.md         # 配置指南
-│   └── intent-router-design.md # 意图路由设计文档
+│   └── dsh-integration.html    # 终选 Agent（deepseek-harness）接入方案
 ├── modules/                    # Python 数据层与业务逻辑
 │   ├── datasource.py           # 统一数据源协议（DataSource Protocol + TushareDataSource / BridgeDataSource / SqliteDataSource / CompositeDataSource + get_datasource() 工厂）
 │   ├── database.py             # SQLite 15+ 张表、事务上下文、CRUD 助手

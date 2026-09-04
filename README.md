@@ -135,6 +135,9 @@ python3 -m modules.cli theme rank --lookback 5
 python3 -m modules.cli scan --save
 ```
 
+第 4 步之后的「终选」（把候选交给 agent 做最后一轮否决与排序并落库）正在接入 deepseek-harness，
+契约、阶段与完成标准见 `docs/dsh-integration.html`；在此之前扫描结果里的 picks 就是最终结果。
+
 #### 活跃市值：选股的总开关
 
 能不能选股由**活跃市值多空区间**单独决定，规则如下（`p` 为当日涨幅）：
