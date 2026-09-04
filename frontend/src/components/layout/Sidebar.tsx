@@ -5,7 +5,7 @@ import { useAppStore } from '../../stores/appStore';
 import { useResponsiveSidebar } from '../../lib/hooks';
 import {
   IconGrid, IconTarget, IconStar, IconHistory, IconArchive, IconActivity, IconExchange, IconSettings, LogoMark,
-  IconRadar,
+  IconRadar, IconBook,
 } from '../ui/icons';
 
 const NAV_ICONS: Record<string, (p: { size?: number; className?: string }) => ReactElement> = {
@@ -15,6 +15,7 @@ const NAV_ICONS: Record<string, (p: { size?: number; className?: string }) => Re
   star: IconStar,
   history: IconHistory,
   archive: IconArchive,
+  book: IconBook,
   activity: IconActivity,
   exchange: IconExchange,
   settings: IconSettings,

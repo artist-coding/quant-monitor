@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_prefix: str = "/api/v1"
 
+    # 看板「资料库」页展示的 HTML 目录：`路径=标签`，分号分隔，相对路径相对仓库根。
+    # docs/ 入库；reports/ 被 .gitignore 忽略，适合放不想公开的个人研报。
+    library_dirs: str = "docs=方案文档;reports=研报"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

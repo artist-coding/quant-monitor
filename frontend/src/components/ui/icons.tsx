@@ -168,6 +168,23 @@ export const IconDatabase = (p: IconProps) => (
 );
 
 /** 品牌标志：金底三根上升蜡烛 */
+export const IconBook = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v16H6.5A2.5 2.5 0 0 0 4 20.5V4.5z" />
+    <path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H20" />
+    <path d="M8.5 6.5h7" />
+    <path d="M8.5 10h5" />
+  </svg>
+);
+
+export const IconExternal = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M14 4h6v6" />
+    <path d="M20 4l-9 9" />
+    <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+  </svg>
+);
+
 export const LogoMark = ({ size = 36, className }: IconProps) => (
   <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className={className}>
     <defs>

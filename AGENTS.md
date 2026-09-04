@@ -548,7 +548,7 @@ python docs/archive/corpus/quality_check.py SKILL.md --strict
 - **数据工厂**：`make_kline_row()`、`make_daily_data()`、`generate_uptrend_klines()`、`generate_downtrend_klines()`、`generate_b1_scenario()` 等
 - **数据库隔离**：所有测试使用临时 SQLite 文件，互不干扰
 
-### 测试覆盖范围（当前 43 个测试文件）
+### 测试覆盖范围（当前 44 个测试文件）
 
 这张表就是 `tests/` 的清单本身，`tests/test_doc_paths.py` 会校验两边一一对应 ——
 增删测试文件时同步改这里，否则测试挂。
@@ -585,6 +585,7 @@ python docs/archive/corpus/quality_check.py SKILL.md --strict
 | `test_review_memory.py` | 复盘案例库 |
 | `test_monitor.py` / `test_notifier.py` | 自选股监控与推送 |
 | `test_daily_api.py` | 每日选股 API（`api/routes/daily.py` + `api/services/daily_service.py`） |
+| `test_library_api.py` | 资料库 API（`api/routes/library.py` + `api/services/library_service.py`）：HTML 文档 / 研报列表、原样返回、路径越界拒绝 |
 | `test_cli_screen.py` / `test_cli_subparser.py` | CLI 子命令分发与参数解析 |
 | `test_research_service.py` / `test_kimi_trace.py` | Kimi Swarm 股票调研服务、会话 trace 导出 |
 | `test_commentary_knowledge.py` | `knowledge/` 引用完整性：代码与 SKILL.md 声明的知识文件必须真实存在 |

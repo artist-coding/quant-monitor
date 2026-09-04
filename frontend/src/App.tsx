@@ -19,6 +19,7 @@ const Simulator = lazy(() => import('./pages/Simulator'));
 const Research = lazy(() => import('./pages/Research'));
 const DailyPick = lazy(() => import('./pages/DailyPick'));
 const ResearchHistory = lazy(() => import('./pages/ResearchHistory'));
+const Library = lazy(() => import('./pages/Library'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -94,6 +95,14 @@ export default function App() {
                 element={
                   <Suspense fallback={<PageFallback />}>
                     <Research />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/library"
+                element={
+                  <Suspense fallback={<PageFallback />}>
+                    <Library />
                   </Suspense>
                 }
               />
