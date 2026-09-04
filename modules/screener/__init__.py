@@ -7,7 +7,14 @@ from .criteria import (
     _register,
 )
 from .data import _dict_to_daily, get_all_stocks, get_recent_klines
-from .engine import _analyze_worker, _daily_to_dict, _filter_stock, analyze_stock, screen_stocks
+from .engine import (
+    _analyze_worker,
+    _daily_to_dict,
+    _filter_stock,
+    analyze_stock,
+    resolve_scan_universe,
+    screen_stocks,
+)
 from .format import format_stock_score
 from .market import get_market_status
 from .models import MarketStatus, StockScore
@@ -30,6 +37,7 @@ __all__ = [
     "get_recent_klines",
     "analyze_stock",
     "screen_stocks",
+    "resolve_scan_universe",
     "format_stock_score",
     "daily_workflow",
     "is_perfect_pattern",

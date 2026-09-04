@@ -133,6 +133,8 @@ export interface StrategyInfo {
 export interface ScreenResult {
   strategy: string;
   criteria: string;
+  scanned: number;
+  hits: number;
   count: number;
   stocks: StockScore[];
 }
