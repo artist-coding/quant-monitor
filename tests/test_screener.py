@@ -234,3 +234,33 @@ def test_screen_stocks_falls_back_to_serial_when_datasource_unpicklable(monkeypa
     assert isinstance(results, list)
     assert "无法被 pickle 序列化" in caplog.text
     assert "回退到串行模式" in caplog.text
+
+# ==================== 扫描范围（max_stocks 语义）====================
+
+
+def test_resolve_scan_universe_zero_means_full_market(monkeypatch):
+    """max_stocks=0 必须返回完整股票池，不能再兜一个 500 的隐藏上限。
+
+    回归的是这个 bug：旧实现写 ``max_stocks if max_stocks > 0 else 500``，
+    "全量"实际只扫按代码升序的前 500 只，600/601/603/688 一只都轮不到，
+    而调用方从返回值里看不出任何异常。
+    """
+    from modules.screener import engine
+
+    fake = [{"ts_code": f"{i:06d}.SZ"} for i in range(1200)]
+    monkeypatch.setattr(engine, "get_all_stocks", lambda datasource=None: fake)
+
+    assert len(engine.resolve_scan_universe(0)) == 1200
+    assert len(engine.resolve_scan_universe(-1)) == 1200
+
+
+def test_resolve_scan_universe_positive_truncates(monkeypatch):
+    """正数才截断，且截的是前 N 只"""
+    from modules.screener import engine
+
+    fake = [{"ts_code": f"{i:06d}.SZ"} for i in range(1200)]
+    monkeypatch.setattr(engine, "get_all_stocks", lambda datasource=None: fake)
+
+    got = engine.resolve_scan_universe(300)
+    assert len(got) == 300
+    assert got[0]["ts_code"] == "000000.SZ"

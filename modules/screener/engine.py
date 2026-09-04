@@ -206,6 +206,18 @@ def _filter_stock(result: tuple[str, list, StockScore], criteria: str) -> bool:
     return False
 
 
+def resolve_scan_universe(max_stocks: int = 0, datasource: DataSource | None = None) -> list[dict]:
+    """确定本次要扫描的股票池。
+
+    ``max_stocks<=0`` 表示全量。这里刻意不再兜一个 500 的默认上限:
+    旧实现写的是 ``max_stocks if max_stocks > 0 else 500``,于是"全量"永远
+    只扫按代码升序的前 500 只(000001.SZ~001390.SZ),5000 只的池子被静默砍到
+    十分之一,而调用方从返回值上完全看不出来。要限速请显式传 max_stocks。
+    """
+    stocks = get_all_stocks(datasource=datasource)
+    return stocks[:max_stocks] if max_stocks > 0 else stocks
+
+
 def screen_stocks(
     criteria: str = "b1",
     max_stocks: int = 0,
@@ -232,15 +244,16 @@ def screen_stocks(
     - "sandglass_perfect": 沙漏完美图形（评分>=80）
     - "volume_ratio_super": 量比战法（立即买或强势攻击场景）
 
-    max_stocks: 最大扫描数量，0=全量（默认500只性能保护）
+    max_stocks: 最大扫描数量，0=全量（约 5000 只，并行下 ~10s）。
+        取的是按代码升序的前 N 只，不是"评分最高的 N 只"——传小值等于
+        只扫深市低号段，600/601/603/688 一只都轮不到。要限制**输出**条数
+        请自己切片 ``screen_stocks(...)[:n]``，不要拿它当 max_stocks 传。
     max_workers: 并行进程数，0=自动（CPU核心数）
     use_parallel: 是否启用多进程并行（<50只时自动关闭；注入的 datasource 需可 pickle）
 
     返回：满足条件的 StockScore 列表（按评分降序）
     """
-    stocks = get_all_stocks(datasource=datasource)
-    limit = max_stocks if max_stocks > 0 else 500
-    stocks = stocks[:limit]
+    stocks = resolve_scan_universe(max_stocks, datasource=datasource)
 
     results: list[StockScore] = []
 

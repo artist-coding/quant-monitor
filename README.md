@@ -84,6 +84,13 @@ python -m modules.cli analyze 000001.SZ --days 120 --json
 python -m modules.cli screen --strategy B1 --limit 20
 ```
 
+`--limit` 只决定输出几条，扫描范围默认全量（约 5000 只，并行下 10 秒左右）。
+要缩小扫描范围用 `--max-stocks`，它取的是按代码升序的前 N 只，只适合排查用：
+
+```powershell
+python -m modules.cli screen --strategy B1 --limit 20 --max-stocks 500
+```
+
 查看数据同步状态：
 
 ```powershell

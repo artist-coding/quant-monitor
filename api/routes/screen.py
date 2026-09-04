@@ -22,6 +22,7 @@ def run_screen(req: ScreenRequest):
             strategy=req.strategy,
             limit=req.limit,
             use_parallel=req.use_parallel,
+            max_stocks=req.max_stocks,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"筛选失败: {e}")

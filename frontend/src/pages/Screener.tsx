@@ -15,11 +15,13 @@ export default function Screener() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState('B1');
   const [limit, setLimit] = useState(20);
+  // 扫描范围独立于输出条数。0=全市场(约 5000 只,并行下 ~10s)
+  const [maxStocks, setMaxStocks] = useState(0);
   const [ran, setRan] = useState(false);
 
   const { data: result, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['screen', selected, limit],
-    queryFn: () => runScreen(selected, limit),
+    queryKey: ['screen', selected, limit, maxStocks],
+    queryFn: () => runScreen(selected, limit, maxStocks),
     enabled: false,
   });
 
@@ -52,9 +54,22 @@ export default function Screener() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted">数量</span>
+            <span className="text-xs text-text-muted">扫描范围</span>
+            <select
+              value={maxStocks}
+              onChange={(e) => setMaxStocks(Number(e.target.value))}
+              className="input-dark"
+            >
+              <option value={0}>全市场</option>
+              {[200, 500, 1000].map((n) => (
+                <option key={n} value={n}>前 {n} 只</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-muted">输出条数</span>
             <select
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
@@ -93,13 +108,13 @@ export default function Screener() {
               <IconTarget size={22} />
             </div>
             <div className="text-sm font-semibold text-text-primary mb-1.5">选择战法开始筛选</div>
-            <div className="text-xs text-text-muted max-w-md leading-relaxed">在上方选择战法(如 B1 / B2 / 长安战法 等),设定数量后点击"开始筛选",系统会扫描全市场命中该战法的个股。</div>
+            <div className="text-xs text-text-muted max-w-md leading-relaxed">在上方选择战法(如 B1 / B2 / 长安战法 等),点击"开始筛选"。默认扫描全市场约 5000 只,耗时 10 秒左右;"输出条数"只决定表格里显示几条,不影响扫描范围。</div>
           </div>
         </Card>
       )}
 
       {ran && result && !isLoading && (
-        <Card title={`筛选结果 — ${result.strategy} (${result.count} 只)`}>
+        <Card title={`筛选结果 — ${result.strategy} (扫描 ${formatNumber(result.scanned, 0)} 只 / 命中 ${result.hits} 只 / 显示 ${result.count} 条)`}>
           {result.stocks.length === 0 ? (
             <div className="text-center py-10 text-sm text-text-muted">无符合条件的股票</div>
           ) : (

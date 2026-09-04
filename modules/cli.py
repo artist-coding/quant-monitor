@@ -273,19 +273,24 @@ def cmd_screen(args):
 
     criteria = STRATEGY_ALIAS.get(args.strategy, args.strategy)
 
+    # --limit 管输出、--max-stocks 管扫描，两者不能再互相顶替：
+    # 旧写法 max_stocks=args.limit 让 `zt screen --limit 20` 只扫 20 只股票，
+    # 命中 0 只看着像"今天没机会"，其实 99.6% 的票根本没进扫描。
+    max_stocks = max(0, getattr(args, "max_stocks", 0))
     results = screen_stocks(
         criteria=criteria,
-        max_stocks=args.limit if args.limit > 0 else 0,
+        max_stocks=max_stocks,
         use_parallel=not args.no_parallel,
     )
 
-    # 输出前 limit 只（limit=0 时输出全部 500 上限内的命中）
+    # 输出前 limit 只（limit<=0 时输出全部命中）
     output_limit = args.limit if args.limit > 0 else len(results)
 
     # ── JSON 输出 ──
     if args.json:
         json_result = {
             "criteria": criteria,
+            "max_stocks": max_stocks,
             "count": len(results[:output_limit]),
             "stocks": [
                 {
@@ -304,7 +309,7 @@ def cmd_screen(args):
 
     # ── 人类可读输出（保持原样） ──
     print(f"\n{'=' * 60}")
-    print(f"股票筛选 (criteria={criteria}, 上限={args.limit or '全市场'})")
+    print(f"股票筛选 (criteria={criteria}, 扫描={max_stocks or '全量'}, 输出={args.limit or '全部'})")
     print(f"{'=' * 60}")
     print(f"\n扫描完成，命中: {len(results)} 只\n")
 
@@ -1327,7 +1332,8 @@ def build_parser():
     # ── screen ──
     p_screen = subparsers.add_parser("screen", help="批量选股（11 种策略）")
     p_screen.add_argument("--strategy", choices=STRATEGY_CHOICES, default="B1", help="筛选策略（11 种别名）")
-    p_screen.add_argument("--limit", type=int, default=20, help="输出数量（0=全市场 500 上限）")
+    p_screen.add_argument("--limit", type=int, default=20, help="输出数量（0=全部命中）")
+    p_screen.add_argument("--max-stocks", type=int, default=0, help="最大扫描数量（0=全量，约 5000 只）")
     p_screen.add_argument("--no-parallel", action="store_true", help="禁用多进程并行")
     p_screen.add_argument("--json", action="store_true", help="JSON输出")
 

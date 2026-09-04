@@ -443,3 +443,135 @@ class TestEdgeCases:
         text = "买入(600519) 1800元 100股"
         r = parser.parse(text)
         assert r.data["ts_code"] == "600519.SH"
+
+
+# ==================== 口语化解析回归（2026-09-04 修复）====================
+
+
+class TestNaturalParseRegressions:
+    """这一组全部来自实测踩到的错解析，每条都曾把错误数据写进 trade_records。"""
+
+    def test_date_digits_not_taken_as_stock_code(self, parser):
+        """紧凑日期 20260903 里的 "202609" 不能被当成股票代码。
+
+        旧正则 ``[012]\\d{5}`` 无边界，会从日期里切出 6 位数字，
+        于是这条记录以 ts_code="202609" 落库，日期还退回了"今天"。
+        """
+        r = parser.parse("20260903 买入 000001.SZ 100股 11.88元")
+        assert r.data["ts_code"] == "000001.SZ"
+        assert r.data["trade_date"] == "2026-09-03"
+        assert r.data["quantity"] == 100
+        assert r.data["price"] == 11.88
+
+    def test_compact_date_alone(self, parser):
+        r = parser.parse("20260903买入600519 100股 1800元")
+        assert r.data["trade_date"] == "2026-09-03"
+
+    def test_chinese_date_format(self, parser):
+        r = parser.parse("2026年1月15日 买入600519 100股 1800元")
+        assert r.data["trade_date"] == "2026-01-15"
+
+    def test_invalid_compact_date_does_not_crash(self, parser):
+        """8 位但不是合法日期（20261332）不能抛异常，也不该被当日期用"""
+        r = parser.parse("买入600519 20261332 100股")
+        assert r.success is True
+        assert r.data["ts_code"] == "600519.SH"
+
+    def test_bare_6_start_code(self, parser):
+        """6 开头的裸代码必须能直接认出，不再依赖名称表兜底"""
+        r = parser.parse("卖出600519 50股")
+        assert r.data["ts_code"] == "600519.SH"
+        assert r.data["action"] == "SELL"
+        assert r.data["quantity"] == 50
+
+    def test_bare_3_start_code(self, parser):
+        r = parser.parse("买入300750 200股 100元")
+        assert r.data["ts_code"] == "300750.SZ"
+
+    def test_longest_name_wins(self, parser):
+        """"平安银行"不能被内置别名"平安"(中国平安)劫走"""
+        r = parser.parse("买入平安银行100股 价格11.88")
+        assert r.data["ts_code"] == "000001.SZ"
+        assert r.data["name"] == "平安银行"
+
+    def test_explicit_code_beats_name(self, parser):
+        """写明代码时名称不得覆盖它，冲突要在 error_message 里说明"""
+        r = parser.parse("买入 000001.SZ 中国平安 100股 11元")
+        assert r.data["ts_code"] == "000001.SZ"
+        assert "对不上" in r.error_message
+
+    def test_suffixed_code_is_kept(self, parser):
+        r = parser.parse("买入000001.SZ 100股 11元")
+        assert r.data["ts_code"] == "000001.SZ"
+
+    def test_chinese_quantity(self, parser):
+        """"两百股"要解析成 200，不能掉进兜底规则变成 1"""
+        r = parser.parse("今天以11.9买了000001.SZ两百股")
+        assert r.data["quantity"] == 200
+        assert r.data["price"] == 11.9
+
+    def test_quantity_not_taken_from_stock_code(self, parser):
+        """``买了?\\s*(\\d+)`` 兜底规则不得再抓到股票代码的数字"""
+        r = parser.parse("买了000001.SZ两百股")
+        assert r.data["quantity"] == 200
+
+    def test_price_with_yi_prefix(self, parser):
+        r = parser.parse("买入600519 以1800 100股")
+        assert r.data["price"] == 1800.0
+
+    def test_ambiguous_bare_integer_is_not_guessed_as_price(self, parser):
+        """"50股 1500" 的 1500 可能是单价也可能是金额，宁可报缺失也不猜"""
+        r = parser.parse("卖出600519 50股 1500")
+        assert r.data["quantity"] == 50
+        assert "price" in r.missing_fields
+
+    def test_non_stock_6_digits_rejected(self, parser):
+        """不属于任何交易所号段的 6 位数字不能当成代码"""
+        r = parser.parse("买入 123456 100股")
+        assert "ts_code" in r.missing_fields
+
+
+class TestNormalizeTsCode:
+    def test_prefix_mapping(self):
+        from modules.trade_parser import _normalize_ts_code
+
+        assert _normalize_ts_code("000001") == "000001.SZ"
+        assert _normalize_ts_code("300750") == "300750.SZ"
+        assert _normalize_ts_code("600519") == "600519.SH"
+        assert _normalize_ts_code("430123") == "430123.BJ"
+        assert _normalize_ts_code("830799") == "830799.BJ"
+
+    def test_already_suffixed_untouched(self):
+        from modules.trade_parser import _normalize_ts_code
+
+        assert _normalize_ts_code("600519.SH") == "600519.SH"
+
+    def test_unknown_prefix_untouched(self):
+        from modules.trade_parser import _normalize_ts_code
+
+        assert _normalize_ts_code("123456") == "123456"
+
+
+class TestChineseNumber:
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("两百", 200),
+            ("一千五", 1500),
+            ("三十五", 35),
+            ("一百零五", 105),
+            ("一万两千", 12000),
+            ("十", 10),
+            ("三", 3),
+        ],
+    )
+    def test_conversion(self, text, expected):
+        from modules.trade_parser import _cn_to_int
+
+        assert _cn_to_int(text) == expected
+
+    def test_garbage_returns_none(self):
+        from modules.trade_parser import _cn_to_int
+
+        assert _cn_to_int("abc") is None
+        assert _cn_to_int("") is None

@@ -42,14 +42,20 @@ def get_strategies() -> list[dict]:
     ]
 
 
-def run_screen(strategy: str, limit: int = 20, use_parallel: bool = True) -> dict:
-    """执行选股筛选"""
-    from modules.screener import screen_stocks
+def run_screen(strategy: str, limit: int = 20, use_parallel: bool = True, max_stocks: int = 0) -> dict:
+    """执行选股筛选。
+
+    ``limit`` 只截断返回结果，``max_stocks`` 才是扫描范围（0=全量）。
+    两者混为一谈过一次，见 ScreenRequest 上的注释。
+    """
+    from modules.screener import resolve_scan_universe, screen_stocks
 
     criteria = STRATEGY_ALIAS.get(strategy, strategy.lower())
+    # 实际扫了多少只要回给前端：这个数字缺席正是"只扫了 1%"能长期没人发现的原因
+    scanned = len(resolve_scan_universe(max_stocks))
     scores = screen_stocks(
         criteria=criteria,
-        max_stocks=limit,
+        max_stocks=max_stocks,
         use_parallel=use_parallel,
     )
 
@@ -71,6 +77,10 @@ def run_screen(strategy: str, limit: int = 20, use_parallel: bool = True) -> dic
     return {
         "strategy": strategy,
         "criteria": criteria,
+        "scanned": scanned,
+        # hits 和 count 必须分开报：只回截断后的条数，就没人能看出
+        # "命中 20 条"到底是真的只有 20 只，还是被 limit 砍掉了后面几百只。
+        "hits": len(scores),
         "count": len(stocks),
         "stocks": stocks,
     }
