@@ -134,7 +134,19 @@ sed -i "s#^ExecStart=/usr/bin/python3#ExecStart=$REPO/.venv/bin/python#" \
     ~/.config/systemd/user/quant-monitor-{api,sync,amv}.service
 ```
 
-`quant-monitor-web.service` 跑的是 node，不用改。
+`quant-monitor-web.service` 跑的是 node，但**同样写死了 `ExecStart=/usr/bin/node`**，
+一样要按机器上 node 的实际位置改——第 3 节那条 NodeSource/nvm 路线，或任何手工装到
+`~/.local` 的 node，都不会在 `/usr/bin/node` 留下可执行文件：
+
+```bash
+command -v node                                   # 比如 /home/<user>/.local/bin/node
+sed -i "s#^ExecStart=/usr/bin/node#ExecStart=$(command -v node)#" \
+    ~/.config/systemd/user/quant-monitor-web.service
+```
+
+不改的话服务会以 `status=203/EXEC` 反复重启，`systemctl status` 里一闪而过写着
+`Unable to locate executable '/usr/bin/node'`；而 `Restart=always` 会让它长期停在
+`activating (auto-restart)`，`is-active` 甚至可能答 `active`，很容易误判成起来了。
 
 ### 另外两份不带 `.user` 的单元
 
@@ -313,10 +325,24 @@ npm --prefix frontend run build      # 服务托管的是 dist/，不 build 就�
 
 ### 想从别的设备访问
 
-现在前后端都只绑 `127.0.0.1`，只有本机能开。要远程访问，改前端单元的 `ExecStart` 加 `--host`：
+前后端都只绑 `127.0.0.1`（`vite.config.ts` 里 dev/preview 两处的 `host` 都显式
+写死了回环地址——不写的话 vite 默认的 `'localhost'` 在只把 localhost 解析到 `::1`
+的机器上会变成**只监听 `[::1]`**，服务照常 running，但 `ssh -L` 和编辑器的自动
+端口转发全都连不上，报的是拒绝连接，很像服务没起）。
+
+**首选 SSH 端口转发**，不动任何服务配置，也不产生对外暴露：
+
+```bash
+ssh -N -L 4173:127.0.0.1:4173 <user>@<host>   # 然后本地浏览器开 http://localhost:4173/
+```
+
+VS Code / Cursor 的 Remote-SSH 会自动转发监听中的端口，PORTS 面板里直接点开即可。
+
+真要让别的设备直连（云主机上先确认安全组/防火墙放行了这个端口），改前端单元的
+`ExecStart` 加 `--host`——CLI 参数会覆盖 `vite.config.ts` 里的 `host`：
 
 ```ini
-ExecStart=/usr/bin/node .../vite.js preview --port 4173 --host 0.0.0.0
+ExecStart=/home/<user>/.local/bin/node .../vite.js preview --port 4173 --host 0.0.0.0
 ```
 
 **但后端不要跟着改成 `0.0.0.0`。** 这套 API 没有任何鉴权——没有 `Depends`、
